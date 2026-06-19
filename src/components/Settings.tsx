@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AppSettings } from "../lib/types";
-import { getAllPlugins } from "../submodule/registry";
+import { getAllPlugins } from "../addons/registry";
 
 interface SettingsProps {
   settings: AppSettings;

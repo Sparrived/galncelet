@@ -34,6 +34,8 @@ pub struct AppSettings {
     pub always_on_top: bool,
     /// Whether `git pull` uses --rebase (default true)
     pub pull_rebase: bool,
+    /// Saved repository paths
+    pub saved_repos: Vec<String>,
     /// Panel visibility keyed by panel id
     pub panel_visibility: HashMap<String, bool>,
     /// Per-window persisted state (position, attach, etc.)
@@ -51,6 +53,7 @@ impl Default for AppSettings {
             log_max_count: 50,
             always_on_top: true,
             pull_rebase: true,
+            saved_repos: Vec::new(),
             panel_visibility,
             window_states: HashMap::new(),
         }

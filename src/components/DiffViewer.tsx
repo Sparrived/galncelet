@@ -21,9 +21,10 @@ function parseDiff(raw: string): DiffLine[] {
 
 interface DiffViewerProps {
   diff: GitDiff | null;
+  statusCode?: string;
 }
 
-export function DiffViewer({ diff }: DiffViewerProps) {
+export function DiffViewer({ diff, statusCode }: DiffViewerProps) {
   const parsed = useMemo(() => (diff ? parseDiff(diff.diff) : []), [diff]);
 
   if (!diff) {
@@ -35,9 +36,10 @@ export function DiffViewer({ diff }: DiffViewerProps) {
   }
 
   if (parsed.length === 0) {
+    const msg = statusCode === "?" ? "新文件 — 暂存后可查看完整内容" : "该文件无可用差异";
     return (
       <div className="diff-empty">
-        <span>该文件无可用差异</span>
+        <span>{msg}</span>
       </div>
     );
   }

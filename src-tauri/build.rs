@@ -4,7 +4,7 @@ use std::path::Path;
 
 fn main() {
     // Generate plugin manifest constants from src/plugins/*/manifest.json
-    let manifest_dir = Path::new("../src/submodule");
+    let manifest_dir = Path::new("../src/addons");
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest = Path::new(&out_dir).join("plugin_manifests.rs");
 

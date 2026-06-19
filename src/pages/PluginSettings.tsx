@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getPlugin } from "../submodule/registry";
+import { getPlugin } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
   setAttachWhitelist, selectFolder, getStatus, updateCardWidth,

@@ -261,6 +261,11 @@ fn stage_file(repo_root: String, file_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn stage_all(repo_root: String) -> Result<(), String> {
+    git::stage_all(&repo_root)
+}
+
+#[tauri::command]
 fn unstage_file(repo_root: String, file_path: String) -> Result<(), String> {
     git::unstage_file(&repo_root, &file_path)
 }
@@ -308,6 +313,11 @@ fn checkout_branch(repo_root: String, branch: String) -> Result<String, String> 
 #[tauri::command]
 fn git_log(repo_root: String, max_count: Option<usize>) -> Result<Vec<git::GitLogEntry>, String> {
     git::git_log(&repo_root, max_count.unwrap_or(50))
+}
+
+#[tauri::command]
+fn list_submodules(repo_root: String) -> Vec<git::SubmoduleInfo> {
+    git::list_submodules(&repo_root)
 }
 
 fn main() {
@@ -375,6 +385,7 @@ fn main() {
             get_file_diff,
             select_folder,
             stage_file,
+            stage_all,
             unstage_file,
             discard_file,
             commit,
@@ -384,6 +395,7 @@ fn main() {
             list_branches,
             checkout_branch,
             git_log,
+            list_submodules,
             untrack_file,
             settings::load_settings,
             settings::save_settings,
@@ -397,6 +409,7 @@ fn main() {
             open_manage_window,
             open_plugin_settings,
             amkr::fetch_amkr_metrics,
+            amkr::generate_commit_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

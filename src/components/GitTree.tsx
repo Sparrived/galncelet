@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import type { TreeNode } from "../lib/types";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -19,15 +19,24 @@ function statusCodeClass(code: string): string {
   return "status-modified";
 }
 
+interface GitTreeActions {
+  onStage?: () => void;
+  onUnstage?: () => void;
+  onDiscard?: () => void;
+  onUntrack?: () => void;
+  /** Whether the selected file is staged */
+  selectedStaged?: boolean;
+}
+
 interface GitTreeProps {
   nodes: TreeNode[];
   onSelect: (path: string, staged: boolean, statusCode: string) => void;
   selectedPath?: string;
   depth?: number;
+  actions?: GitTreeActions;
 }
 
-export function GitTree({ nodes, onSelect, selectedPath, depth = 0 }: GitTreeProps) {
-  // Sort: dirs first, then files; both alphabetical
+export const GitTree = React.memo(function GitTree({ nodes, onSelect, selectedPath, depth = 0, actions }: GitTreeProps) {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -42,29 +51,28 @@ export function GitTree({ nodes, onSelect, selectedPath, depth = 0 }: GitTreePro
           onSelect={onSelect}
           selectedPath={selectedPath}
           depth={depth}
+          actions={actions}
         />
       ))}
     </ul>
   );
-}
+});
 
 interface TreeItemProps {
   node: TreeNode;
   onSelect: (path: string, staged: boolean, statusCode: string) => void;
   selectedPath?: string;
   depth: number;
+  actions?: GitTreeActions;
 }
 
-function TreeItem({ node, onSelect, selectedPath, depth }: TreeItemProps) {
+function TreeItem({ node, onSelect, selectedPath, depth, actions }: TreeItemProps) {
   const [expanded, setExpanded] = useState(node.expanded ?? true);
 
   if (node.type === "dir") {
     return (
       <li className="tree-dir">
-        <div
-          className="tree-row"
-          onClick={() => setExpanded((e) => !e)}
-        >
+        <div className="tree-row" onClick={() => setExpanded((e) => !e)}>
           <span className="tree-chevron">{expanded ? "▼" : "▶"}</span>
           <span className="tree-dirname">{node.name}</span>
         </div>
@@ -74,6 +82,7 @@ function TreeItem({ node, onSelect, selectedPath, depth }: TreeItemProps) {
             onSelect={onSelect}
             selectedPath={selectedPath}
             depth={depth + 1}
+            actions={actions}
           />
         )}
       </li>
@@ -93,7 +102,21 @@ function TreeItem({ node, onSelect, selectedPath, depth }: TreeItemProps) {
           {STATUS_LABELS[code] ?? code}
         </span>
         <span className="tree-filename">{node.name}</span>
-        {node.staged && <span className="staged-dot" title="已暂存">●</span>}
+        {isSelected && actions ? (
+          <span className="tree-actions">
+            {actions.selectedStaged ? (
+              <button className="tree-action-btn tree-action-unstage" onClick={(e) => { e.stopPropagation(); actions.onUnstage?.(); }} title="取消暂存">▼</button>
+            ) : (
+              <button className="tree-action-btn tree-action-stage" onClick={(e) => { e.stopPropagation(); actions.onStage?.(); }} title="暂存">▲</button>
+            )}
+            <button className="tree-action-btn tree-action-discard" onClick={(e) => { e.stopPropagation(); actions.onDiscard?.(); }} title="丢弃">✕</button>
+            {actions.selectedStaged && (
+              <button className="tree-action-btn tree-action-untrack" onClick={(e) => { e.stopPropagation(); actions.onUntrack?.(); }} title="停止追踪">⊘</button>
+            )}
+          </span>
+        ) : (
+          node.staged && <span className="staged-dot" title="已暂存">●</span>
+        )}
       </div>
     </li>
   );

@@ -46,6 +46,11 @@ export interface GitBranch {
   upstream: string | null;
 }
 
+export interface SubmoduleInfo {
+  path: string;
+  name: string;
+}
+
 export interface GitLogEntry {
   hash: string;
   fullHash: string;
@@ -72,6 +77,8 @@ export interface AppSettings {
   logMaxCount: number;
   alwaysOnTop: boolean;
   pullRebase: boolean;
+  /** Saved repository paths */
+  savedRepos: string[];
   /** Panel visibility keyed by panel id. Missing key = visible. */
   panelVisibility: Record<string, boolean>;
   /** Per-window persisted state */
@@ -84,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logMaxCount: 50,
   alwaysOnTop: true,
   pullRebase: true,
+  savedRepos: [],
   panelVisibility: { git: true, amkr: true },
   windowStates: {},
 };

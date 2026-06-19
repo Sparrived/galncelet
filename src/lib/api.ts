@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { GitStatus, GitDiff, GitBranch, GitLogEntry, AppSettings, AmkrMetrics, WindowState } from "./types";
+import type { GitStatus, GitDiff, GitBranch, GitLogEntry, SubmoduleInfo, AppSettings, AmkrMetrics, WindowState } from "./types";
 
 export async function getStatus(repoPath?: string): Promise<GitStatus> {
   return invoke<GitStatus>("get_status", { repoPath: repoPath ?? null });
@@ -23,6 +23,10 @@ export async function selectFolder(): Promise<string | null> {
 
 export async function stageFile(repoRoot: string, filePath: string): Promise<void> {
   return invoke<void>("stage_file", { repoRoot, filePath });
+}
+
+export async function stageAll(repoRoot: string): Promise<void> {
+  return invoke<void>("stage_all", { repoRoot });
 }
 
 export async function unstageFile(repoRoot: string, filePath: string): Promise<void> {
@@ -63,6 +67,10 @@ export async function checkoutBranch(repoRoot: string, branch: string): Promise<
 
 export async function gitLog(repoRoot: string, maxCount?: number): Promise<GitLogEntry[]> {
   return invoke<GitLogEntry[]>("git_log", { repoRoot, maxCount: maxCount ?? 50 });
+}
+
+export async function listSubmodules(repoRoot: string): Promise<SubmoduleInfo[]> {
+  return invoke<SubmoduleInfo[]>("list_submodules", { repoRoot });
 }
 
 export async function untrackFile(repoRoot: string, filePath: string): Promise<void> {
@@ -135,4 +143,8 @@ export async function listVisibleWindows(): Promise<WindowEntry[]> {
 
 export async function fetchAmkrMetrics(): Promise<AmkrMetrics | null> {
   return invoke<AmkrMetrics | null>("fetch_amkr_metrics");
+}
+
+export async function generateCommitMessage(repoRoot: string): Promise<string> {
+  return invoke<string>("generate_commit_message", { repoRoot });
 }

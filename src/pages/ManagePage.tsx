@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getAllPlugins, type PluginDef } from "../submodule/registry";
+import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
   setAttachWhitelist, createPluginWindow, listVisibleWindows,

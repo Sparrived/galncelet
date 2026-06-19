@@ -472,7 +472,7 @@ pub fn get_file_diff(
     file_path: &str,
     staged: bool,
 ) -> Result<GitDiff, String> {
-    let mut args = vec!["diff", "--no-ext-diff", "-z"];
+    let mut args = vec!["diff", "--no-ext-diff"];
     if staged {
         args.push("--cached");
     }
@@ -516,4 +516,90 @@ pub fn get_file_diff(
         diff: diff_text,
         staged,
     })
+}
+
+/// Information about a submodule or nested repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleInfo {
+    pub path: String,
+    pub name: String,
+}
+
+/// Stage all changes (tracked + untracked).
+pub fn stage_all(repo_root: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["add", "-A"])
+        .output()
+        .map_err(|e| format!("Failed to stage all: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.to_string());
+    }
+    Ok(())
+}
+
+/// Get a summary of all staged changes (combined diff) for AI commit generation.
+pub fn get_staged_diff_summary(repo_root: &str) -> Result<String, String> {
+    // Get staged diff (all files)
+    let diff_output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["diff", "--cached", "--stat"])
+        .output()
+        .map_err(|e| format!("Failed to get staged stat: {e}"))?;
+
+    let stat = String::from_utf8_lossy(&diff_output.stdout).to_string();
+
+    // Get actual diff (limited to avoid huge output)
+    let diff_detail = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["diff", "--cached", "--no-color"])
+        .output()
+        .map_err(|e| format!("Failed to get staged diff: {e}"))?;
+
+    let detail = String::from_utf8_lossy(&diff_detail.stdout).to_string();
+
+    Ok(format!("{}\n{}", stat, detail))
+}
+
+/// List git submodules in a repository.
+pub fn list_submodules(repo_root: &str) -> Vec<SubmoduleInfo> {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["submodule", "status"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut submodules = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Format: [<prefix>]<hash> <path> [(<branch>)]
+        // prefix can be '-', '+', ' ', 'U'
+        // Skip the prefix char and hash, extract path
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let path = parts[1].to_string();
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            submodules.push(SubmoduleInfo { path, name });
+        }
+    }
+
+    submodules
 }

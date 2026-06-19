@@ -1,12 +1,12 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getPlugin } from "./submodule/registry";
+import { getPlugin } from "./addons/registry";
 import { WidgetShell } from "./widgets/WidgetShell";
 import { WidgetProvider } from "./lib/context";
 
 // Side-effect imports: each plugin self-registers on load
-import "./submodule/git";
-import "./submodule/amkr";
+import "./addons/git";
+import "./addons/amkr";
 
 import ManagePage from "./pages/ManagePage";
 
@@ -28,6 +28,12 @@ export default function App() {
     setBranch(b);
   }, []);
 
+  // Memoize context value — only changes when data actually changes
+  const contextValue = useMemo(
+    () => ({ repoRoot, branch, refresh, showResult, showError, onStatusChange }),
+    [repoRoot, branch, refresh, showResult, showError, onStatusChange],
+  );
+
   if (widgetType === "manage") {
     return <div className="app"><ManagePage /></div>;
   }
@@ -46,7 +52,7 @@ export default function App() {
     : plugin.title;
 
   return (
-    <WidgetProvider value={{ repoRoot, branch, refresh, showResult, showError, onStatusChange }}>
+    <WidgetProvider value={contextValue}>
       <div className="app">
         <WidgetShell
           title={widgetTitle}
