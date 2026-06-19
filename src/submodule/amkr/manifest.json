@@ -1,0 +1,13 @@
+{
+  "id": "amkr",
+  "title": "AMKR 仪表盘",
+  "description": "Auto Model Key Router 实时指标监控",
+  "icon": "📊",
+  "defaultWidth": 360,
+  "defaultHeight": 320,
+  "showCloseButton": false,
+  "showCollapseButton": false,
+  "showAttachButton": false,
+  "defaultAttachEnabled": false,
+  "defaultWhitelist": []
+}
