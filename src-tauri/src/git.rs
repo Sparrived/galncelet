@@ -64,6 +64,44 @@ fn run_git(repo_root: &str, args: &[&str]) -> Result<String, String> {
     Ok(stdout)
 }
 
+/// Run a git command and return stdout, stderr, and success status.
+pub fn run_git_raw(repo_root: &str, args: &[&str]) -> (bool, String, String) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(args)
+        .output();
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            (o.status.success(), stdout, stderr)
+        }
+        Err(e) => (false, String::new(), format!("Failed to run git: {e}")),
+    }
+}
+
+/// Run an arbitrary git command string and return the result.
+pub fn exec_git_command(repo_root: &str, command: &str) -> Result<(bool, String, String), String> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err("Empty command".to_string());
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(&parts)
+        .output()
+        .map_err(|e| format!("Failed to run git: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok((output.status.success(), stdout, stderr))
+}
+
 /// Resolve the repo root from a given path (or cwd if None).
 pub fn resolve_repo_root(path: Option<&str>) -> Result<String, String> {
     let dir = path.unwrap_or(".");
@@ -249,6 +287,7 @@ pub fn get_status(repo_path: Option<&str>) -> Result<GitStatus, String> {
 
 /// Stage a file (git add)
 pub fn stage_file(repo_root: &str, file_path: &str) -> Result<(), String> {
+    remove_stale_lock(repo_root);
     let status = Command::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -263,6 +302,7 @@ pub fn stage_file(repo_root: &str, file_path: &str) -> Result<(), String> {
 
 /// Unstage a file (git reset HEAD)
 pub fn unstage_file(repo_root: &str, file_path: &str) -> Result<(), String> {
+    remove_stale_lock(repo_root);
     let status = Command::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -311,6 +351,7 @@ pub fn discard_file(repo_root: &str, file_path: &str, status_code: &str) -> Resu
 
 /// Commit staged changes
 pub fn commit(repo_root: &str, message: &str) -> Result<String, String> {
+    remove_stale_lock(repo_root);
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -525,19 +566,52 @@ pub struct SubmoduleInfo {
     pub name: String,
 }
 
+/// Remove stale git index.lock file if it exists and is older than 3 seconds.
+fn remove_stale_lock(repo_root: &str) {
+    let lock_path = std::path::Path::new(repo_root).join(".git").join("index.lock");
+    if let Ok(metadata) = std::fs::metadata(&lock_path) {
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(elapsed) = modified.elapsed() {
+                // Only remove if lock file is older than 3 seconds
+                if elapsed.as_secs() > 3 {
+                    let _ = std::fs::remove_file(&lock_path);
+                }
+            }
+        }
+    }
+}
+
 /// Stage all changes (tracked + untracked).
 pub fn stage_all(repo_root: &str) -> Result<(), String> {
+    // Remove stale lock file if exists
+    remove_stale_lock(repo_root);
+
+    // Stage tracked files
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["add", "-A"])
+        .args(["add", "-u"])
         .output()
-        .map_err(|e| format!("Failed to stage all: {e}"))?;
+        .map_err(|e| format!("Failed to stage tracked files: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(stderr.to_string());
+        return Err(format!("git add -u failed: {}", stderr));
     }
+
+    // Stage untracked files
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["add", "--", "."])
+        .output()
+        .map_err(|e| format!("Failed to stage untracked files: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git add . failed: {}", stderr));
+    }
+
     Ok(())
 }
 

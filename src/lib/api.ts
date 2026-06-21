@@ -111,9 +111,10 @@ export async function createPluginWindow(
   width: number,
   height: number,
   defaultAttachEnabled: boolean = true,
+  defaultAttachRemember: boolean = false,
   defaultWhitelist: string[] = [],
 ): Promise<void> {
-  return invoke<void>("create_plugin_window", { pluginId, title, width, height, defaultAttachEnabled, defaultWhitelist });
+  return invoke<void>("create_plugin_window", { pluginId, title, width, height, defaultAttachEnabled, defaultAttachRemember, defaultWhitelist });
 }
 
 export async function openManageWindow(): Promise<void> {
@@ -132,6 +133,14 @@ export async function setAttachWhitelist(windowLabel: string, patterns: string[]
   return invoke<void>("set_attach_whitelist", { windowLabel, patterns });
 }
 
+export async function setAttachRemember(windowLabel: string, remember: boolean): Promise<void> {
+  return invoke<void>("set_attach_remember", { windowLabel, remember });
+}
+
+export async function setHasPosition(windowLabel: string): Promise<void> {
+  return invoke<void>("set_has_position", { windowLabel });
+}
+
 export interface WindowEntry {
   title: string;
   process: string;
@@ -147,4 +156,44 @@ export async function fetchAmkrMetrics(): Promise<AmkrMetrics | null> {
 
 export async function generateCommitMessage(repoRoot: string): Promise<string> {
   return invoke<string>("generate_commit_message", { repoRoot });
+}
+
+export interface AmkrModelInfo {
+  id: string;
+  aliases: string[];
+  is_current: boolean;
+}
+
+export async function getAmkrModels(): Promise<AmkrModelInfo[] | null> {
+  return invoke<AmkrModelInfo[] | null>("get_amkr_models");
+}
+
+export async function setAmkrUnifiedModel(modelId: string): Promise<void> {
+  return invoke<void>("set_amkr_unified_model", { modelId });
+}
+
+export async function startAmkrWs(): Promise<void> {
+  return invoke<void>("start_amkr_ws");
+}
+
+export async function stopAmkrWs(): Promise<void> {
+  return invoke<void>("stop_amkr_ws");
+}
+
+export async function watchGitRepo(repoPath: string): Promise<void> {
+  return invoke<void>("watch_git_repo", { repoPath });
+}
+
+export async function unwatchGitRepo(repoPath: string): Promise<void> {
+  return invoke<void>("unwatch_git_repo", { repoPath });
+}
+
+export interface GitCommandResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+export async function execGitCommand(repoRoot: string, command: string): Promise<GitCommandResult> {
+  return invoke<GitCommandResult>("exec_git_command", { repoRoot, command });
 }

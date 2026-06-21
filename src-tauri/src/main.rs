@@ -3,14 +3,19 @@
 
 mod acrylic;
 mod amkr;
+mod browser_ext;
 mod git;
+mod git_watcher;
+mod page_notes;
 mod plugins;
 mod settings;
 mod tray;
 mod window_attach;
 
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tauri::Manager;
+use git_watcher::GitWatcherManager;
 use window_attach::AttachState;
 
 /// Create a widget window with standard glass-panel styling.
@@ -24,6 +29,7 @@ fn create_widget_window(
     height: f64,
     attach_state: &AttachState,
     default_attach_enabled: bool,
+    default_attach_remember: bool,
     default_whitelist: &[String],
 ) {
     let url = format!("index.html?widget={}", url_suffix);
@@ -51,6 +57,22 @@ fn create_widget_window(
         let mut wlm = attach_state.attach_whitelist.lock().unwrap();
         wlm.insert(label.to_string(), whitelist);
     }
+    // Restore attach_remember (saved value > plugin default)
+    let initial_remember = saved.as_ref().and_then(|s| s.attach_remember).unwrap_or(default_attach_remember);
+    {
+        let mut arm = attach_state.attach_remember.lock().unwrap();
+        arm.insert(label.to_string(), initial_remember);
+    }
+    // Track whether this widget has a saved position
+    {
+        let has_pos = saved.as_ref().map_or(false, |s| s.x.is_some() && s.y.is_some());
+        let mut hsp = attach_state.has_saved_position.lock().unwrap();
+        hsp.insert(label.to_string(), has_pos);
+    }
+
+    // When attach is enabled, start hidden — the attach loop will show the window
+    // when a matching foreground window is detected. This avoids a flash on startup.
+    let start_visible = !initial_attach;
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
@@ -65,7 +87,7 @@ fn create_widget_window(
     .resizable(false)
     .maximizable(false)
     .skip_taskbar(true)
-    .visible(true);
+    .visible(start_visible);
 
     // Restore saved position
     if let Some(ref s) = saved {
@@ -144,6 +166,21 @@ fn set_attach_whitelist(state: tauri::State<'_, Arc<AttachState>>, window_label:
     wl.insert(window_label, patterns);
 }
 
+/// Tauri command: set whether a widget uses "remember position" mode.
+/// When true, the attach system only manages show/hide, not position.
+#[tauri::command]
+fn set_attach_remember(state: tauri::State<'_, Arc<AttachState>>, window_label: String, remember: bool) {
+    let mut ar = state.attach_remember.lock().unwrap();
+    ar.insert(window_label, remember);
+}
+
+/// Tauri command: mark that a widget has been manually positioned.
+#[tauri::command]
+fn set_has_position(state: tauri::State<'_, Arc<AttachState>>, window_label: String) {
+    let mut hsp = state.has_saved_position.lock().unwrap();
+    hsp.insert(window_label, true);
+}
+
 /// Tauri command: create a plugin widget window on demand.
 /// If the window already exists, just show and focus it.
 #[tauri::command]
@@ -155,6 +192,7 @@ fn create_plugin_window(
     width: f64,
     height: f64,
     default_attach_enabled: bool,
+    default_attach_remember: bool,
     default_whitelist: Vec<String>,
 ) {
     let label = format!("widget-{}", plugin_id);
@@ -163,7 +201,19 @@ fn create_plugin_window(
         let _ = win.set_focus();
         return;
     }
-    create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, &default_whitelist);
+    create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, default_attach_remember, &default_whitelist);
+}
+
+/// Tauri command: start watching a git repository for changes.
+#[tauri::command]
+fn watch_git_repo(watcher: tauri::State<'_, Arc<GitWatcherManager>>, repo_path: String) -> Result<(), String> {
+    watcher.watch(&repo_path)
+}
+
+/// Tauri command: stop watching a git repository.
+#[tauri::command]
+fn unwatch_git_repo(watcher: tauri::State<'_, Arc<GitWatcherManager>>, repo_path: String) {
+    watcher.unwatch(&repo_path);
 }
 
 /// Tauri command: open a plugin settings window.
@@ -246,6 +296,19 @@ fn get_status(repo_path: Option<String>) -> Result<git::GitStatus, String> {
 #[tauri::command]
 fn get_file_diff(repo_root: String, file_path: String, staged: bool) -> Result<git::GitDiff, String> {
     git::get_file_diff(&repo_root, &file_path, staged)
+}
+
+#[derive(serde::Serialize)]
+struct GitCommandResult {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+#[tauri::command]
+fn exec_git_command(repo_root: String, command: String) -> Result<GitCommandResult, String> {
+    let (success, stdout, stderr) = git::exec_git_command(&repo_root, &command)?;
+    Ok(GitCommandResult { success, stdout, stderr })
 }
 
 #[tauri::command]
@@ -331,6 +394,14 @@ fn main() {
             let attach_state = Arc::new(AttachState::new());
             app.manage(attach_state.clone());
 
+            // Initialize git watcher manager
+            let git_watcher = Arc::new(GitWatcherManager::new(handle.clone()));
+            app.manage(git_watcher.clone());
+
+            // AMKR WebSocket handle
+            let amkr_ws_handle: amkr::AmkrWsHandle = Arc::new(Mutex::new(None));
+            app.manage(amkr_ws_handle);
+
             // Create widget windows from plugin manifests (zero hardcoded knowledge)
             let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
             for manifest in plugins::load_manifests() {
@@ -341,8 +412,9 @@ fn main() {
                 let w = manifest.default_width.unwrap_or(360.0);
                 let h = manifest.default_height.unwrap_or(600.0);
                 let attach = manifest.default_attach_enabled.unwrap_or(true);
+                let remember = manifest.default_attach_remember.unwrap_or(false);
                 let wl = manifest.default_whitelist.clone().unwrap_or_default();
-                create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, &wl);
+                create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl);
             }
 
             // Create management window (hidden by default)
@@ -371,12 +443,38 @@ fn main() {
                 }
             });
 
+            // Browser extension setup (copy to app data, write registry)
+            browser_ext::setup(&handle);
+
             // System tray
             tray::setup(app).expect("failed to setup system tray");
 
             // Window attachment loop
             let app_handle = app.handle().clone();
             window_attach::start_attach_loop(app_handle, attach_state);
+
+            // Start page-notes WebSocket server
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = page_notes::start_ws_server(app_handle).await {
+                    eprintln!("[page-notes] Failed to start WebSocket server: {}", e);
+                }
+            });
+
+            // Start AMKR event WebSocket client
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let ws_handle = app_handle.state::<amkr::AmkrWsHandle>();
+                if let Err(e) = amkr::start_amkr_ws(app_handle.clone(), ws_handle).await {
+                    eprintln!("[amkr] Failed to start WebSocket client: {}", e);
+                }
+            });
+
+            // Auto-watch saved repos
+            let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
+            for repo in &app_settings.saved_repos {
+                let _ = git_watcher.watch(repo);
+            }
 
             Ok(())
         })
@@ -404,12 +502,26 @@ fn main() {
             set_body_collapsed,
             set_attach_enabled,
             set_attach_whitelist,
+            set_attach_remember,
+            set_has_position,
             window_attach::list_visible_windows,
             create_plugin_window,
             open_manage_window,
             open_plugin_settings,
+            watch_git_repo,
+            unwatch_git_repo,
+            exec_git_command,
             amkr::fetch_amkr_metrics,
             amkr::generate_commit_message,
+            amkr::get_amkr_models,
+            amkr::set_amkr_unified_model,
+            amkr::start_amkr_ws,
+            amkr::stop_amkr_ws,
+            page_notes::load_page_notes,
+            page_notes::save_page_notes,
+            page_notes::get_ws_port,
+            browser_ext::open_extension_dir,
+            browser_ext::launch_browser_with_extension,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -18,6 +18,8 @@ pub struct WindowState {
     pub attach_enabled: Option<bool>,
     /// Attach whitelist — foreground window title substrings
     pub whitelist: Option<Vec<String>>,
+    /// When true, attach only manages show/hide, not position
+    pub attach_remember: Option<bool>,
 }
 
 /// Application settings persisted as JSON.
@@ -47,6 +49,7 @@ impl Default for AppSettings {
         let mut panel_visibility = HashMap::new();
         panel_visibility.insert("git".to_string(), true);
         panel_visibility.insert("amkr".to_string(), true);
+        panel_visibility.insert("page-notes".to_string(), true);
         Self {
             refresh_interval_ms: 2000,
             card_width: 360,

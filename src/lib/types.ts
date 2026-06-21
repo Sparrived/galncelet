@@ -68,6 +68,8 @@ export interface WindowState {
   attachEnabled?: boolean;
   /** Attach whitelist — foreground window title substrings. Empty = no restriction. */
   whitelist?: string[];
+  /** When true, attach only manages show/hide, not position. */
+  attachRemember?: boolean;
 }
 
 /** Persisted application settings */
@@ -123,9 +125,36 @@ export interface AmkrMetrics {
   rate_window_seconds: number;
   current_rpm: number;
   current_tpm: number;
+  router_status: "green" | "yellow" | "red";
+  active_requests: number;
   total: UsageStats;
   caller_types: Record<string, UsageStats>;
   models: Record<string, UsageStats>;
   requested_models: Record<string, UsageStats>;
   keys: Record<string, Record<string, UsageStats>>;
+}
+
+/** AMKR model info for unified-model selection */
+export interface AmkrModelInfo {
+  id: string;
+  aliases: string[];
+  is_current: boolean;
+}
+
+/** AMKR WebSocket event */
+export interface AmkrEvent {
+  type: "metrics_snapshot" | "key_state_change" | "config_change" | "connected";
+  data: any;
+}
+
+/** AMKR key state change event data */
+export interface AmkrKeyStateChange {
+  model_id: string;
+  key_name: string;
+  state: {
+    failures: number;
+    cooldown_remaining_seconds: number;
+    last_status_code: number | null;
+    disabled: boolean;
+  };
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
@@ -27,6 +27,13 @@ pub struct AttachState {
     pub collapsed_height: Arc<Mutex<HashMap<String, i32>>>,
     pub attach_enabled: Arc<Mutex<HashMap<String, bool>>>,
     pub attach_whitelist: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// When true for a widget, the attach system only manages show/hide,
+    /// not position — the widget stays at its last manually-set position.
+    pub attach_remember: Arc<Mutex<HashMap<String, bool>>>,
+    /// Whether the widget has a saved position (set once, persists in memory).
+    pub has_saved_position: Arc<Mutex<HashMap<String, bool>>>,
+    /// Last foreground window handle (for browser URL reading)
+    pub last_fg: Arc<Mutex<isize>>,
 }
 
 impl AttachState {
@@ -37,6 +44,9 @@ impl AttachState {
             collapsed_height: Arc::new(Mutex::new(HashMap::new())),
             attach_enabled: Arc::new(Mutex::new(HashMap::new())),
             attach_whitelist: Arc::new(Mutex::new(HashMap::new())),
+            attach_remember: Arc::new(Mutex::new(HashMap::new())),
+            has_saved_position: Arc::new(Mutex::new(HashMap::new())),
+            last_fg: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -69,33 +79,37 @@ fn is_own_window(hwnd: HWND) -> bool {
     pid == unsafe { GetCurrentProcessId() }
 }
 
-const WIDGET_LABELS: &[&str] = &["widget-git", "widget-amkr"];
-
 /// Reposition all enabled, non-collapsed widgets next to the given window.
+/// Widgets with attach_enabled = false are not affected by this logic.
 #[cfg(target_os = "windows")]
 fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &AttachState) {
     let cw = *state.card_width.lock().unwrap();
     let collapsed = state.collapsed_height.lock().unwrap().clone();
     let enabled = state.attach_enabled.lock().unwrap().clone();
     let whitelist = state.attach_whitelist.lock().unwrap().clone();
+    let remember = state.attach_remember.lock().unwrap().clone();
+    let has_pos = state.has_saved_position.lock().unwrap().clone();
+
+    // Derive widget labels dynamically from registered attach state
+    let labels: Vec<String> = enabled.keys().cloned().collect();
 
     // Get process name of target
     let mut pid: u32 = 0;
     unsafe { GetWindowThreadProcessId(target, Some(&mut pid)); }
     let process = get_process_name(pid);
 
-    // Check which widgets should be visible
-    let any_visible = WIDGET_LABELS.iter().any(|&label| {
-        if collapsed.contains_key(label) { return false; }
+    // Check which attach-enabled widgets should be visible
+    let any_visible = labels.iter().any(|label| {
+        if collapsed.contains_key(label.as_str()) { return false; }
         if enabled.get(label).copied() == Some(false) { return false; }
         let wl = whitelist.get(label).map(|v| v.as_slice()).unwrap_or(&[]);
         matches_whitelist(&process, wl)
     });
 
     if !any_visible {
-        // Hide all non-collapsed widgets
-        for &label in WIDGET_LABELS {
-            if collapsed.contains_key(label) { continue; }
+        for label in &labels {
+            if collapsed.contains_key(label.as_str()) { continue; }
+            if enabled.get(label).copied() == Some(false) { continue; }
             if let Some(win) = app_handle.get_webview_window(label) {
                 let _ = win.hide();
             }
@@ -123,8 +137,8 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
     let card_y = target_rect.top.max(mi.rcWork.top);
 
     let mut y_offset: i32 = 0;
-    for &label in WIDGET_LABELS {
-        if collapsed.contains_key(label) { continue; }
+    for label in &labels {
+        if collapsed.contains_key(label.as_str()) { continue; }
         if enabled.get(label).copied() == Some(false) { continue; }
         let wl = whitelist.get(label).map(|v| v.as_slice()).unwrap_or(&[]);
         if !matches_whitelist(&process, wl) {
@@ -136,6 +150,12 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
 
         if let Some(win) = app_handle.get_webview_window(label) {
             let _ = win.show();
+            // "remember" mode: skip repositioning if widget has a saved position
+            if remember.get(label).copied() == Some(true)
+                && has_pos.get(label).copied() == Some(true)
+            {
+                continue;
+            }
             let _ = win.set_position(tauri::Position::Physical(
                 tauri::PhysicalPosition { x: card_x, y: card_y + y_offset },
             ));
@@ -144,6 +164,24 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
             }
         }
     }
+
+    // Read browser URL when foreground changes to a browser
+    // TODO: Re-enable when page_url module is available
+    // if crate::page_url::is_browser(&process) {
+    //     let current_fg = target.0 as isize;
+    //     let mut last = state.last_fg.lock().unwrap();
+    //     if *last != current_fg {
+    //         *last = current_fg;
+    //         let app = app_handle.clone();
+    //         thread::spawn(move || {
+    //             if let Some(url) = crate::page_url::read_browser_url(current_fg) {
+    //                 let _ = app.emit("page-url-changed", &url);
+    //             }
+    //         });
+    //     }
+    // } else {
+    //     *state.last_fg.lock().unwrap() = 0;
+    // }
 }
 
 // ─── list_visible_windows ───
@@ -244,29 +282,35 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
         }
     });
 
-    // Thread 2: lightweight poll — repositions when dirty flag is set,
-    // or when foreground window changes
+    // Thread 2: event-driven — only repositions when dirty flag is set
+    // No polling needed since Thread 1's WinEventHook fires on window moves
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(500));
         let mut last_fg: isize = 0;
 
         loop {
             if !*state.running.lock().unwrap() { break; }
 
+            // Wait for dirty flag to be set (with 100ms timeout for foreground check)
+            // This avoids busy-waiting while still catching foreground changes
+            let mut waited = 0;
+            while waited < 100 {
+                if WINDOW_DIRTY.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+                waited += 10;
+            }
+
             let fg = unsafe { GetForegroundWindow() };
             let fg_changed = fg.0 as isize != last_fg;
-            let dirty = WINDOW_DIRTY.load(std::sync::atomic::Ordering::Relaxed);
+            let dirty = WINDOW_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed);
 
             if dirty || fg_changed {
-                WINDOW_DIRTY.store(false, std::sync::atomic::Ordering::Relaxed);
                 last_fg = fg.0 as isize;
-
                 if !is_own_window(fg) {
                     reposition_widgets(&app_handle, fg, &state);
                 }
             }
-
-            thread::sleep(Duration::from_millis(50));
         }
     });
 }

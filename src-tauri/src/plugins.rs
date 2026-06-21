@@ -9,6 +9,7 @@ pub struct PluginManifest {
     pub default_width: Option<f64>,
     pub default_height: Option<f64>,
     pub default_attach_enabled: Option<bool>,
+    pub default_attach_remember: Option<bool>,
     pub default_whitelist: Option<Vec<String>>,
     #[allow(dead_code)]
     pub description: Option<String>,

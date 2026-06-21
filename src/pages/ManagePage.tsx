@@ -43,6 +43,7 @@ export default function ManagePage() {
       plugin.id, plugin.title,
       plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
       plugin.defaultAttachEnabled !== false,
+      plugin.defaultAttachRemember === true,
       plugin.defaultWhitelist ?? [],
     );
   };

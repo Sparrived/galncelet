@@ -1,6 +1,6 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, loadSettings, saveWindowState } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, setHasPosition, loadSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
 
 const HEADER_H = 36;
@@ -15,6 +15,7 @@ interface WidgetShellProps {
   showCollapseButton?: boolean;
   showAttachButton?: boolean;
   defaultAttachEnabled?: boolean;
+  defaultAttachRemember?: boolean;
   defaultWhitelist?: string[];
 }
 
@@ -26,33 +27,52 @@ export function WidgetShell({
   showCollapseButton = true,
   showAttachButton = true,
   defaultAttachEnabled = true,
+  defaultAttachRemember = false,
   defaultWhitelist = [],
 }: WidgetShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
+  const [attachRemember, setAttachRememberState] = useState(defaultAttachRemember);
   const win = getCurrentWindow();
   const winLabel = win.label;
   const pluginId = winLabel.replace("widget-", "");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialized = useRef(false);
+  const preCollapseHeight = useRef<number | null>(null);
 
-  // Debounced save of window state
+  // Refs to avoid stale closures in saveState
+  const attachEnabledRef = useRef(attachEnabled);
+  const attachRememberRef = useRef(attachRemember);
+  attachEnabledRef.current = attachEnabled;
+  attachRememberRef.current = attachRemember;
+
+  // Debounced save of window state — reads latest values from refs
   const saveState = useCallback((partial: Partial<WindowState>) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        const pos = await win.outerPosition();
-        const scale = window.devicePixelRatio || 1;
+        let x: number | undefined;
+        let y: number | undefined;
+        try {
+          const pos = await win.outerPosition();
+          const scale = window.devicePixelRatio || 1;
+          x = pos.x / scale;
+          y = pos.y / scale;
+        } catch {
+          // Window might be hidden — save without position
+        }
         const current: WindowState = {
-          x: pos.x / scale,
-          y: pos.y / scale,
-          attachEnabled,
+          x, y,
+          attachEnabled: attachEnabledRef.current,
+          attachRemember: attachRememberRef.current,
           ...partial,
         };
         await saveWindowState(pluginId, current);
-      } catch {}
+      } catch (e) {
+        console.error(`[WidgetShell] save failed for ${pluginId}:`, e);
+      }
     }, SAVE_DEBOUNCE_MS);
-  }, [winLabel, attachEnabled, pluginId]);
+  }, [winLabel, pluginId]);
 
   // On mount: restore saved position, attach state, and whitelist
   useEffect(() => {
@@ -80,11 +100,21 @@ export function WidgetShell({
         if (wl.length > 0) {
           setAttachWhitelist(winLabel, wl);
         }
+        // Restore attach remember mode
+        if (ws.attachRemember) {
+          setAttachRememberState(true);
+          setAttachRemember(winLabel, true);
+        }
       }
       // Apply default attach if no saved state
       if (!ws?.attachEnabled && defaultAttachEnabled !== false) {
         setAttachEnabledApi(winLabel, true);
       }
+      // Persist initial state so attachRemember/attachEnabled are saved
+      setTimeout(() => {
+        console.log(`[WidgetShell] ${pluginId} delayed save: attachEnabled=${attachEnabledRef.current} attachRemember=${attachRememberRef.current}`);
+        saveState({});
+      }, 1000);
     }).catch(() => {});
   }, []);
 
@@ -92,20 +122,31 @@ export function WidgetShell({
   useEffect(() => {
     const unlisten = win.onMoved(() => {
       saveState({});
+      setHasPosition(winLabel);
     });
     return () => { unlisten.then((fn) => fn()); };
-  }, [saveState]);
+  }, [saveState, winLabel]);
 
   const toggleCollapse = useCallback(async () => {
     const next = !collapsed;
     setCollapsed(next);
     const scale = window.devicePixelRatio || 1;
     if (next) {
+      // Save current height before collapsing
+      try {
+        const size = await win.outerSize();
+        preCollapseHeight.current = size.height / scale;
+      } catch {
+        preCollapseHeight.current = null;
+      }
       await setBodyCollapsed(winLabel, Math.round(HEADER_H * scale));
       saveState({ height: HEADER_H });
     } else {
-      await setBodyCollapsed(winLabel, null, Math.round(DEFAULT_H * scale));
-      saveState({ height: DEFAULT_H });
+      // Restore to the height before collapsing, or plugin default
+      const restoreH = preCollapseHeight.current ?? DEFAULT_H;
+      await setBodyCollapsed(winLabel, null, Math.round(restoreH * scale));
+      saveState({ height: restoreH });
+      preCollapseHeight.current = null;
     }
   }, [collapsed, winLabel, saveState]);
 
@@ -116,8 +157,15 @@ export function WidgetShell({
     saveState({ attachEnabled: next });
   }, [attachEnabled, winLabel, saveState]);
 
+  const toggleRemember = useCallback(async () => {
+    const next = !attachRemember;
+    setAttachRememberState(next);
+    await setAttachRemember(winLabel, next);
+    saveState({ attachRemember: next });
+  }, [attachRemember, winLabel, saveState]);
+
   const handleClose = useCallback(async () => {
-    try { await win.close(); } catch {}
+    try { await win.hide(); } catch {}
   }, [win]);
 
   return (
@@ -126,6 +174,15 @@ export function WidgetShell({
         <span className="widget-title">{title}</span>
         <div className="widget-header-right">
           {headerRight}
+          {showAttachButton && attachEnabled && (
+            <button
+              className={`btn btn-remember${attachRemember ? " btn-remember-on" : ""}`}
+              onClick={toggleRemember}
+              title={attachRemember ? "跟随位置" : "记住位置"}
+            >
+              &#128204;
+            </button>
+          )}
           {showAttachButton && (
             <button
               className={`btn btn-attach${attachEnabled ? " btn-attach-on" : ""}`}

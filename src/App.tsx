@@ -7,6 +7,7 @@ import { WidgetProvider } from "./lib/context";
 // Side-effect imports: each plugin self-registers on load
 import "./addons/git";
 import "./addons/amkr";
+import "./addons/page-notes";
 
 import ManagePage from "./pages/ManagePage";
 
@@ -60,6 +61,7 @@ export default function App() {
           showCollapseButton={plugin.showCollapseButton}
           showAttachButton={plugin.showAttachButton}
           defaultAttachEnabled={plugin.defaultAttachEnabled}
+          defaultAttachRemember={plugin.defaultAttachRemember}
           defaultWhitelist={plugin.defaultWhitelist}
         >
           <Component />

@@ -1,6 +1,11 @@
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use crate::git;
 
@@ -10,6 +15,20 @@ struct AmkrConfig {
     host: Option<String>,
     port: Option<u16>,
     local_api_key: Option<String>,
+    models: Option<Vec<AmkrModel>>,
+    unified_model: Option<AmkrUnifiedModel>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct AmkrModel {
+    id: String,
+    aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct AmkrUnifiedModel {
+    model: String,
+    key: Option<String>,
 }
 
 /// Resolve the default AMKR config file path.
@@ -171,4 +190,167 @@ pub async fn generate_commit_message(repo_root: String) -> Result<String, String
     }
 
     Ok(message)
+}
+
+/// Response structure for the models list API.
+#[derive(Debug, Serialize)]
+pub struct AmkrModelInfo {
+    pub id: String,
+    pub aliases: Vec<String>,
+    pub is_current: bool,
+}
+
+/// Tauri command: get available models and current unified model selection.
+#[tauri::command]
+pub async fn get_amkr_models() -> Result<Option<Vec<AmkrModelInfo>>, String> {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let data = fs::read_to_string(&path)
+        .map_err(|e| format!("读取配置失败: {e}"))?;
+
+    let config: AmkrConfig = serde_json::from_str(&data)
+        .map_err(|e| format!("解析配置失败: {e}"))?;
+
+    let models = config.models.unwrap_or_default();
+    let current_model = config.unified_model.map(|u| u.model);
+
+    let result: Vec<AmkrModelInfo> = models.iter().map(|m| {
+        AmkrModelInfo {
+            id: m.id.clone(),
+            aliases: m.aliases.clone().unwrap_or_default(),
+            is_current: current_model.as_ref() == Some(&m.id),
+        }
+    }).collect();
+
+    Ok(Some(result))
+}
+
+/// Tauri command: update the unified model selection.
+#[tauri::command]
+pub async fn set_amkr_unified_model(model_id: String) -> Result<(), String> {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return Err("AMKR 配置文件路径不存在".to_string()),
+    };
+
+    if !path.exists() {
+        return Err("AMKR 配置文件不存在".to_string());
+    }
+
+    let data = fs::read_to_string(&path)
+        .map_err(|e| format!("读取配置失败: {e}"))?;
+
+    let mut config: serde_json::Value = serde_json::from_str(&data)
+        .map_err(|e| format!("解析配置失败: {e}"))?;
+
+    // Update unified_model field
+    config["unified_model"] = serde_json::json!({
+        "model": model_id
+    });
+
+    // Write back to file
+    let updated = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("序列化配置失败: {e}"))?;
+
+    fs::write(&path, updated)
+        .map_err(|e| format!("写入配置失败: {e}"))?;
+
+    Ok(())
+}
+
+/// Shared state for the AMKR WebSocket connection.
+pub type AmkrWsHandle = Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>;
+
+/// Tauri command: start the AMKR event WebSocket client.
+/// Connects to `ws://{host}:{port}/ws/events`, authenticates, and forwards
+/// events to the frontend via `amkr-event` Tauri events.
+#[tauri::command]
+pub async fn start_amkr_ws(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AmkrWsHandle>,
+) -> Result<(), String> {
+    // Stop any existing connection
+    let mut handle = state.lock().await;
+    if let Some(h) = handle.take() {
+        h.abort();
+    }
+
+    let (host, port, api_key) = resolve_amkr()
+        .ok_or("AMKR 未安装或配置文件不存在")?;
+
+    let url = format!("ws://{}:{}/ws/events", host, port);
+
+    let task = tokio::spawn(async move {
+        let mut retry_delay = 1u64;
+        loop {
+            println!("[amkr] connecting to {}", url);
+            match connect_async(&url).await {
+                Ok((ws_stream, _)) => {
+                    retry_delay = 1;
+                    let (mut write, mut read) = ws_stream.split();
+
+                    // Send auth message
+                    let auth = serde_json::json!({
+                        "type": "auth",
+                        "token": api_key,
+                    });
+                    if let Err(e) = write.send(Message::Text(auth.to_string().into())).await {
+                        eprintln!("[amkr] failed to send auth: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(retry_delay)).await;
+                        continue;
+                    }
+
+                    // Read events loop
+                    while let Some(msg) = read.next().await {
+                        match msg {
+                            Ok(Message::Text(text)) => {
+                                match serde_json::from_str::<serde_json::Value>(&text) {
+                                    Ok(event) => {
+                                        let _ = app.emit("amkr-event", &event);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[amkr] invalid event JSON: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(Message::Close(_)) => break,
+                            Ok(Message::Ping(data)) => {
+                                let _ = write.send(Message::Pong(data)).await;
+                            }
+                            Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                    println!("[amkr] WebSocket disconnected, reconnecting...");
+                }
+                Err(e) => {
+                    eprintln!("[amkr] connection failed: {}", e);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(retry_delay)).await;
+            retry_delay = (retry_delay * 2).min(30);
+        }
+    });
+
+    *handle = Some(task);
+    Ok(())
+}
+
+/// Tauri command: stop the AMKR event WebSocket client.
+#[tauri::command]
+pub async fn stop_amkr_ws(
+    state: tauri::State<'_, AmkrWsHandle>,
+) -> Result<(), String> {
+    let mut handle = state.lock().await;
+    if let Some(h) = handle.take() {
+        h.abort();
+    }
+    Ok(())
 }
