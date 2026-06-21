@@ -7,6 +7,7 @@ mod browser_ext;
 mod git;
 mod git_watcher;
 mod page_notes;
+mod page_url;
 mod plugins;
 mod settings;
 mod tray;
@@ -41,6 +42,7 @@ fn create_widget_window(
         .and_then(|s| s.window_states.get(plugin_id).cloned());
 
     let actual_height = saved.as_ref().and_then(|s| s.height).unwrap_or(height);
+    println!("[create] {} saved_height={:?} manifest_height={} actual={}", plugin_id, saved.as_ref().and_then(|s| s.height), height, actual_height);
 
     // Determine initial attach enabled: saved value > plugin default
     let initial_attach = saved.as_ref().and_then(|s| s.attach_enabled).unwrap_or(default_attach_enabled);
@@ -62,12 +64,6 @@ fn create_widget_window(
     {
         let mut arm = attach_state.attach_remember.lock().unwrap();
         arm.insert(label.to_string(), initial_remember);
-    }
-    // Track whether this widget has a saved position
-    {
-        let has_pos = saved.as_ref().map_or(false, |s| s.x.is_some() && s.y.is_some());
-        let mut hsp = attach_state.has_saved_position.lock().unwrap();
-        hsp.insert(label.to_string(), has_pos);
     }
 
     // When attach is enabled, start hidden — the attach loop will show the window
@@ -174,11 +170,11 @@ fn set_attach_remember(state: tauri::State<'_, Arc<AttachState>>, window_label: 
     ar.insert(window_label, remember);
 }
 
-/// Tauri command: mark that a widget has been manually positioned.
+
+/// Tauri command: get the current browser URL from the attach loop.
 #[tauri::command]
-fn set_has_position(state: tauri::State<'_, Arc<AttachState>>, window_label: String) {
-    let mut hsp = state.has_saved_position.lock().unwrap();
-    hsp.insert(window_label, true);
+fn get_browser_url(state: tauri::State<'_, Arc<AttachState>>) -> String {
+    state.current_url.lock().unwrap().clone()
 }
 
 /// Tauri command: create a plugin widget window on demand.
@@ -404,7 +400,9 @@ fn main() {
 
             // Create widget windows from plugin manifests (zero hardcoded knowledge)
             let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
+            println!("[setup] creating widget windows...");
             for manifest in plugins::load_manifests() {
+                println!("[setup] loading plugin: {} (visible={})", manifest.id, app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true));
                 if !app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true) {
                     continue;
                 }
@@ -415,6 +413,11 @@ fn main() {
                 let remember = manifest.default_attach_remember.unwrap_or(false);
                 let wl = manifest.default_whitelist.clone().unwrap_or_default();
                 create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl);
+            }
+
+            // List all created windows
+            for (label, _win) in handle.webview_windows() {
+                println!("[setup] window created: {}", label);
             }
 
             // Create management window (hidden by default)
@@ -503,7 +506,7 @@ fn main() {
             set_attach_enabled,
             set_attach_whitelist,
             set_attach_remember,
-            set_has_position,
+            get_browser_url,
             window_attach::list_visible_windows,
             create_plugin_window,
             open_manage_window,

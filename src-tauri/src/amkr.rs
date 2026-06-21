@@ -119,10 +119,10 @@ fn resolve_amkr() -> Option<(String, u16, String)> {
     Some((host, port, api_key))
 }
 
-/// Tauri command: generate a commit message from staged changes using AMKR.
+/// Tauri command: generate a commit message from staged changes using AMKR with streaming.
 /// Returns the generated message, or an error string.
 #[tauri::command]
-pub async fn generate_commit_message(repo_root: String) -> Result<String, String> {
+pub async fn generate_commit_message(app: tauri::AppHandle, repo_root: String) -> Result<String, String> {
     let (host, port, api_key) = resolve_amkr()
         .ok_or("AMKR 未安装或配置文件不存在")?;
 
@@ -146,16 +146,18 @@ pub async fn generate_commit_message(repo_root: String) -> Result<String, String
     );
 
     let body = serde_json::json!({
+        "model": "unified-model",
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3
+        "temperature": 0.3,
+        "stream": true
     });
 
     let url = format!("http://{}:{}/v1/chat/completions", host, port);
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| format!("HTTP client error: {e}"))?;
 
@@ -175,16 +177,38 @@ pub async fn generate_commit_message(repo_root: String) -> Result<String, String
         return Err(format!("AMKR 返回 {}: {}", status, text));
     }
 
-    let json: serde_json::Value = resp.json().await
-        .map_err(|e| format!("解析 AMKR 响应失败: {e}"))?;
+    // Process streaming response
+    use futures_util::StreamExt;
+    let mut stream = resp.bytes_stream();
+    let mut message = String::new();
+    let mut buffer = String::new();
 
-    // Extract message from OpenAI-compatible response
-    let message = json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("流式读取失败: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
 
+        // Process complete lines
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].trim().to_string();
+            buffer = buffer[line_end + 1..].to_string();
+
+            if line.starts_with("data: ") {
+                let data = &line[6..];
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(content) = json["choices"][0]["delta"]["content"].as_str() {
+                        message.push_str(content);
+                        // Emit progress event
+                        let _ = app.emit("ai-commit-progress", &message);
+                    }
+                }
+            }
+        }
+    }
+
+    let message = message.trim().to_string();
     if message.is_empty() {
         return Err("AI 未返回有效内容".to_string());
     }

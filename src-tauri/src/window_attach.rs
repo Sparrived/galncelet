@@ -30,10 +30,8 @@ pub struct AttachState {
     /// When true for a widget, the attach system only manages show/hide,
     /// not position — the widget stays at its last manually-set position.
     pub attach_remember: Arc<Mutex<HashMap<String, bool>>>,
-    /// Whether the widget has a saved position (set once, persists in memory).
-    pub has_saved_position: Arc<Mutex<HashMap<String, bool>>>,
-    /// Last foreground window handle (for browser URL reading)
-    pub last_fg: Arc<Mutex<isize>>,
+    /// Current browser URL (shared with frontend)
+    pub current_url: Arc<Mutex<String>>,
 }
 
 impl AttachState {
@@ -45,8 +43,7 @@ impl AttachState {
             attach_enabled: Arc::new(Mutex::new(HashMap::new())),
             attach_whitelist: Arc::new(Mutex::new(HashMap::new())),
             attach_remember: Arc::new(Mutex::new(HashMap::new())),
-            has_saved_position: Arc::new(Mutex::new(HashMap::new())),
-            last_fg: Arc::new(Mutex::new(0)),
+            current_url: Arc::new(Mutex::new(String::new())),
         }
     }
 }
@@ -88,10 +85,17 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
     let enabled = state.attach_enabled.lock().unwrap().clone();
     let whitelist = state.attach_whitelist.lock().unwrap().clone();
     let remember = state.attach_remember.lock().unwrap().clone();
-    let has_pos = state.has_saved_position.lock().unwrap().clone();
 
     // Derive widget labels dynamically from registered attach state
     let labels: Vec<String> = enabled.keys().cloned().collect();
+    // Debug: check which windows actually exist
+    static WIN_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    if WIN_CHECK.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        for label in &labels {
+            let exists = app_handle.get_webview_window(label).is_some();
+            println!("[attach] window {} exists={}", label, exists);
+        }
+    }
 
     // Get process name of target
     let mut pid: u32 = 0;
@@ -150,10 +154,9 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
 
         if let Some(win) = app_handle.get_webview_window(label) {
             let _ = win.show();
-            // "remember" mode: skip repositioning if widget has a saved position
-            if remember.get(label).copied() == Some(true)
-                && has_pos.get(label).copied() == Some(true)
-            {
+            println!("[attach] showing {}", label);
+            // "remember" mode: skip repositioning, user has positioned this widget
+            if remember.get(label).copied() == Some(true) {
                 continue;
             }
             let _ = win.set_position(tauri::Position::Physical(
@@ -165,23 +168,6 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
         }
     }
 
-    // Read browser URL when foreground changes to a browser
-    // TODO: Re-enable when page_url module is available
-    // if crate::page_url::is_browser(&process) {
-    //     let current_fg = target.0 as isize;
-    //     let mut last = state.last_fg.lock().unwrap();
-    //     if *last != current_fg {
-    //         *last = current_fg;
-    //         let app = app_handle.clone();
-    //         thread::spawn(move || {
-    //             if let Some(url) = crate::page_url::read_browser_url(current_fg) {
-    //                 let _ = app.emit("page-url-changed", &url);
-    //             }
-    //         });
-    //     }
-    // } else {
-    //     *state.last_fg.lock().unwrap() = 0;
-    // }
 }
 
 // ─── list_visible_windows ───
@@ -310,6 +296,30 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
                 if !is_own_window(fg) {
                     reposition_widgets(&app_handle, fg, &state);
                 }
+            }
+
+            // Read browser URL periodically (independent of dirty/fg_changed)
+            let process = get_process_name({
+                let mut pid: u32 = 0;
+                unsafe { GetWindowThreadProcessId(fg, Some(&mut pid)); }
+                pid
+            });
+            if crate::page_url::is_browser(&process) {
+                static LAST_URL_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let last = LAST_URL_READ.load(std::sync::atomic::Ordering::Relaxed);
+                if now.saturating_sub(last) >= 500 {
+                    LAST_URL_READ.store(now, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(url) = crate::page_url::read_browser_url(fg.0 as isize) {
+                        *state.current_url.lock().unwrap() = url;
+                    }
+                }
+            } else {
+                let mut cu = state.current_url.lock().unwrap();
+                if !cu.is_empty() { cu.clear(); }
             }
         }
     });

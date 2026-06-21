@@ -1,10 +1,9 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, setHasPosition, loadSettings, saveWindowState } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
 
 const HEADER_H = 36;
-const DEFAULT_H = 800;
 const SAVE_DEBOUNCE_MS = 500;
 
 interface WidgetShellProps {
@@ -39,6 +38,7 @@ export function WidgetShell({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialized = useRef(false);
   const preCollapseHeight = useRef<number | null>(null);
+  const actualHeight = useRef<number>(0);
 
   // Refs to avoid stale closures in saveState
   const attachEnabledRef = useRef(attachEnabled);
@@ -88,6 +88,7 @@ export function WidgetShell({
         }
         // Restore height
         if (ws.height != null) {
+          actualHeight.current = ws.height;
           win.setSize(new LogicalSize(s.cardWidth, ws.height)).catch(() => {});
         }
         // Restore attach state
@@ -118,13 +119,21 @@ export function WidgetShell({
     }).catch(() => {});
   }, []);
 
-  // Track window position changes
+  // Track window position and size changes
   useEffect(() => {
-    const unlisten = win.onMoved(() => {
+    const unlistenMove = win.onMoved(() => {
       saveState({});
-      setHasPosition(winLabel);
     });
-    return () => { unlisten.then((fn) => fn()); };
+    const unlistenResize = win.onResized(() => {
+      win.outerSize().then((size) => {
+        const scale = window.devicePixelRatio || 1;
+        actualHeight.current = size.height / scale;
+      }).catch(() => {});
+    });
+    return () => {
+      unlistenMove.then((fn) => fn());
+      unlistenResize.then((fn) => fn());
+    };
   }, [saveState, winLabel]);
 
   const toggleCollapse = useCallback(async () => {
@@ -142,8 +151,8 @@ export function WidgetShell({
       await setBodyCollapsed(winLabel, Math.round(HEADER_H * scale));
       saveState({ height: HEADER_H });
     } else {
-      // Restore to the height before collapsing, or plugin default
-      const restoreH = preCollapseHeight.current ?? DEFAULT_H;
+      // Restore to the height before collapsing, or last known height
+      const restoreH = preCollapseHeight.current || actualHeight.current || 400;
       await setBodyCollapsed(winLabel, null, Math.round(restoreH * scale));
       saveState({ height: restoreH });
       preCollapseHeight.current = null;

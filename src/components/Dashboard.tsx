@@ -1,8 +1,26 @@
+import { useEffect, useRef, useState } from "react";
 import type { AmkrMetrics, UsageStats } from "../lib/types";
 
 interface DashboardProps {
   metrics: AmkrMetrics | null;
   loading: boolean;
+}
+
+/** 数字变化时带闪烁高亮效果的组件 */
+function AnimatedNumber({ value, className }: { value: string; className?: string }) {
+  const [flash, setFlash] = useState(false);
+  const prevRef = useRef(value);
+
+  useEffect(() => {
+    if (prevRef.current !== value) {
+      prevRef.current = value;
+      setFlash(true);
+      const timer = setTimeout(() => setFlash(false), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [value]);
+
+  return <span className={`${className ?? ""} dash-animated-num${flash ? " dash-num-flash" : ""}`}>{value}</span>;
 }
 
 function fmt(n: number): string {
@@ -58,7 +76,7 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
       {/* Row 1: Live metrics */}
       <div className="dash-row dash-headline">
         <div className="dash-stat">
-          <span className="dash-num">{fmt(t.requests)}</span>
+          <AnimatedNumber value={fmt(t.requests)} className="dash-num" />
           <span className="dash-sub">总请求</span>
         </div>
         <div className="dash-stat">
@@ -66,11 +84,11 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
           <span className="dash-sub">运行</span>
         </div>
         <div className="dash-stat">
-          <span className="dash-num">{fmtMs(t.avg_first_token_ms)}</span>
+          <AnimatedNumber value={fmtMs(t.avg_first_token_ms)} className="dash-num" />
           <span className="dash-sub">首Token</span>
         </div>
         <div className="dash-stat">
-          <span className="dash-num">{fmtMs(t.avg_duration_ms)}</span>
+          <AnimatedNumber value={fmtMs(t.avg_duration_ms)} className="dash-num" />
           <span className="dash-sub">平均延迟</span>
         </div>
       </div>
@@ -80,21 +98,21 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
         <div className="dash-bar-item">
           <div className="dash-bar-head">
             <span className="dash-bar-label">成功率</span>
-            <span className="dash-bar-value" style={{ color: srColor(successRate) }}>{successRate.toFixed(1)}%</span>
+            <AnimatedNumber value={`${successRate.toFixed(1)}%`} className="dash-bar-value" />
           </div>
           <Bar value={successRate} color={srColor(successRate)} />
         </div>
         <div className="dash-bar-item">
           <div className="dash-bar-head">
             <span className="dash-bar-label">平均延迟</span>
-            <span className="dash-bar-value">{fmtMs(t.avg_duration_ms)}</span>
+            <AnimatedNumber value={fmtMs(t.avg_duration_ms)} className="dash-bar-value" />
           </div>
           <Bar value={Math.min(100, t.avg_duration_ms / 30)} color="var(--color-modified)" />
         </div>
         <div className="dash-bar-item">
           <div className="dash-bar-head">
             <span className="dash-bar-label">Token 缓存</span>
-            <span className="dash-bar-value">{pct(t.cached_token_rate)}</span>
+            <AnimatedNumber value={pct(t.cached_token_rate)} className="dash-bar-value" />
           </div>
           <Bar value={t.cached_token_rate * 100} color="var(--diff-hunk-color)" />
         </div>
@@ -104,19 +122,19 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
       <div className="dash-row dash-tokens">
         <div className="dash-token">
           <span className="dash-token-label">输入</span>
-          <span className="dash-token-value">{fmt(t.prompt_tokens)}</span>
+          <AnimatedNumber value={fmt(t.prompt_tokens)} className="dash-token-value" />
         </div>
         <div className="dash-token">
           <span className="dash-token-label">输出</span>
-          <span className="dash-token-value">{fmt(t.completion_tokens)}</span>
+          <AnimatedNumber value={fmt(t.completion_tokens)} className="dash-token-value" />
         </div>
         <div className="dash-token">
           <span className="dash-token-label">缓存</span>
-          <span className="dash-token-value">{fmt(t.cached_tokens)}</span>
+          <AnimatedNumber value={fmt(t.cached_tokens)} className="dash-token-value" />
         </div>
         <div className="dash-token">
           <span className="dash-token-label">总计</span>
-          <span className="dash-token-value dash-token-total">{fmt(t.total_tokens)}</span>
+          <AnimatedNumber value={fmt(t.total_tokens)} className="dash-token-value dash-token-total" />
         </div>
       </div>
 
@@ -132,7 +150,7 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
         </div>
         <div className="dash-latency-group">
           <span className="dash-latency-title">重试</span>
-          <span className="dash-latency-range">{t.retries} 次</span>
+          <AnimatedNumber value={`${t.retries} 次`} className="dash-latency-range" />
         </div>
       </div>
 
@@ -154,11 +172,11 @@ export function Dashboard({ metrics, loading }: DashboardProps) {
               {modelEntries.map(([name, s]) => (
                 <tr key={name}>
                   <td className="dash-model-name">{name}</td>
-                  <td>{fmt(s.requests)}</td>
-                  <td style={{ color: srColor(sr(s)) }}>{sr(s).toFixed(1)}%</td>
-                  <td>{fmtMs(s.avg_duration_ms)}</td>
-                  <td>{fmtMs(s.avg_first_token_ms)}</td>
-                  <td>{fmt(s.total_tokens)}</td>
+                  <td><AnimatedNumber value={fmt(s.requests)} /></td>
+                  <td style={{ color: srColor(sr(s)) }}><AnimatedNumber value={`${sr(s).toFixed(1)}%`} /></td>
+                  <td><AnimatedNumber value={fmtMs(s.avg_duration_ms)} /></td>
+                  <td><AnimatedNumber value={fmtMs(s.avg_first_token_ms)} /></td>
+                  <td><AnimatedNumber value={fmt(s.total_tokens)} /></td>
                 </tr>
               ))}
             </tbody>

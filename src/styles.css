@@ -782,6 +782,10 @@ html, body, #root {
   font-family: var(--font-sans);
   outline: none;
   transition: border-color 0.15s;
+  resize: none;
+  min-height: 36px;
+  max-height: 80px;
+  line-height: 1.4;
 }
 
 .commit-input:focus {
@@ -1720,6 +1724,19 @@ html, body, #root {
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
+}
+
+.dash-animated-num {
+  display: inline-block;
+  transition: transform 0.15s ease-out;
+}
+.dash-num-flash {
+  animation: dash-num-pulse 0.4s ease-out;
+}
+@keyframes dash-num-pulse {
+  0% { transform: scale(1); text-shadow: 0 0 0 transparent; }
+  30% { transform: scale(1.08); text-shadow: 0 0 8px rgba(96, 165, 250, 0.5); }
+  100% { transform: scale(1); text-shadow: 0 0 0 transparent; }
 }
 
 .dash-rpm { color: #60a5fa; }

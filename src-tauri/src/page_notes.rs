@@ -221,6 +221,8 @@ pub async fn start_ws_server(app_handle: tauri::AppHandle) -> Result<(), String>
 
                                         // Emit event to Tauri frontend
                                         let _ = app.emit("page-notes-update", &update);
+                                        // Also emit page-url-changed so PageNotesPanel receives the URL
+                                        let _ = app.emit("page-url-changed", &serde_json::json!({ "url": update.url }));
                                     }
                                     Ok(WsInMessage::Ping) => {
                                         let _ = write

@@ -566,16 +566,35 @@ pub struct SubmoduleInfo {
     pub name: String,
 }
 
-/// Remove stale git index.lock file if it exists and is older than 3 seconds.
+/// Remove stale git index.lock files if they exist and are older than 1 second.
+/// Recursively checks .git directory and all nested submodules.
 fn remove_stale_lock(repo_root: &str) {
-    let lock_path = std::path::Path::new(repo_root).join(".git").join("index.lock");
-    if let Ok(metadata) = std::fs::metadata(&lock_path) {
-        if let Ok(modified) = metadata.modified() {
-            if let Ok(elapsed) = modified.elapsed() {
-                // Only remove if lock file is older than 3 seconds
-                if elapsed.as_secs() > 3 {
-                    let _ = std::fs::remove_file(&lock_path);
+    let git_dir = std::path::Path::new(repo_root).join(".git");
+    remove_stale_lock_in_dir(&git_dir);
+}
+
+fn remove_stale_lock_in_dir(dir: &std::path::Path) {
+    // Remove index.lock in this directory
+    let lock_path = dir.join("index.lock");
+    if lock_path.exists() {
+        if let Ok(metadata) = std::fs::metadata(&lock_path) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(elapsed) = modified.elapsed() {
+                    // Remove if older than 1 second
+                    if elapsed.as_millis() > 1000 {
+                        let _ = std::fs::remove_file(&lock_path);
+                    }
                 }
+            }
+        }
+    }
+
+    // Recursively check all subdirectories for lock files
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                remove_stale_lock_in_dir(&path);
             }
         }
     }

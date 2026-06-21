@@ -137,10 +137,6 @@ export async function setAttachRemember(windowLabel: string, remember: boolean):
   return invoke<void>("set_attach_remember", { windowLabel, remember });
 }
 
-export async function setHasPosition(windowLabel: string): Promise<void> {
-  return invoke<void>("set_has_position", { windowLabel });
-}
-
 export interface WindowEntry {
   title: string;
   process: string;
