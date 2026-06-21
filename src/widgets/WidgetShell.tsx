@@ -1,9 +1,9 @@
-import { type ReactNode, useState, useCallback, useEffect, useRef } from "react";
+import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
+import { HEADER_H, WidgetProvider } from "./WidgetContext";
 
-const HEADER_H = 36;
 const SAVE_DEBOUNCE_MS = 500;
 
 interface WidgetShellProps {
@@ -39,6 +39,7 @@ export function WidgetShell({
   const initialized = useRef(false);
   const preCollapseHeight = useRef<number | null>(null);
   const actualHeight = useRef<number>(0);
+  const collapsedRef = useRef(false);
 
   // Refs to avoid stale closures in saveState
   const attachEnabledRef = useRef(attachEnabled);
@@ -111,11 +112,6 @@ export function WidgetShell({
       if (!ws?.attachEnabled && defaultAttachEnabled !== false) {
         setAttachEnabledApi(winLabel, true);
       }
-      // Persist initial state so attachRemember/attachEnabled are saved
-      setTimeout(() => {
-        console.log(`[WidgetShell] ${pluginId} delayed save: attachEnabled=${attachEnabledRef.current} attachRemember=${attachRememberRef.current}`);
-        saveState({});
-      }, 1000);
     }).catch(() => {});
   }, []);
 
@@ -125,6 +121,7 @@ export function WidgetShell({
       saveState({});
     });
     const unlistenResize = win.onResized(() => {
+      if (collapsedRef.current) return;
       win.outerSize().then((size) => {
         const scale = window.devicePixelRatio || 1;
         actualHeight.current = size.height / scale;
@@ -139,6 +136,7 @@ export function WidgetShell({
   const toggleCollapse = useCallback(async () => {
     const next = !collapsed;
     setCollapsed(next);
+    collapsedRef.current = next;
     const scale = window.devicePixelRatio || 1;
     if (next) {
       // Save current height before collapsing
@@ -177,47 +175,51 @@ export function WidgetShell({
     try { await win.hide(); } catch {}
   }, [win]);
 
+  const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
+
   return (
-    <div className="widget">
-      <header className="widget-header">
-        <span className="widget-title">{title}</span>
-        <div className="widget-header-right">
-          {headerRight}
-          {showAttachButton && attachEnabled && (
-            <button
-              className={`btn btn-remember${attachRemember ? " btn-remember-on" : ""}`}
-              onClick={toggleRemember}
-              title={attachRemember ? "跟随位置" : "记住位置"}
-            >
-              &#128204;
-            </button>
-          )}
-          {showAttachButton && (
-            <button
-              className={`btn btn-attach${attachEnabled ? " btn-attach-on" : ""}`}
-              onClick={toggleAttach}
-              title={attachEnabled ? "停止吸附" : "开启吸附"}
-            >
-              &#128279;
-            </button>
-          )}
-          {showCollapseButton && (
-            <button
-              className={`btn${collapsed ? " btn-collapsed" : ""}`}
-              onClick={toggleCollapse}
-              title={collapsed ? "展开" : "收起"}
-            >
-              &#9776;
-            </button>
-          )}
-          {showCloseButton && (
-            <button className="btn btn-close" onClick={handleClose} title="关闭">
-              &#10005;
-            </button>
-          )}
-        </div>
-      </header>
-      {!collapsed && <div className="widget-body">{children}</div>}
-    </div>
+    <WidgetProvider value={contextValue}>
+      <div className="widget">
+        <header className="widget-header">
+          <span className="widget-title">{title}</span>
+          <div className="widget-header-right">
+            {headerRight}
+            {showAttachButton && attachEnabled && (
+              <button
+                className={`btn btn-remember${attachRemember ? " btn-remember-on" : ""}`}
+                onClick={toggleRemember}
+                title={attachRemember ? "跟随位置" : "记住位置"}
+              >
+                &#128204;
+              </button>
+            )}
+            {showAttachButton && (
+              <button
+                className={`btn btn-attach${attachEnabled ? " btn-attach-on" : ""}`}
+                onClick={toggleAttach}
+                title={attachEnabled ? "停止吸附" : "开启吸附"}
+              >
+                &#128279;
+              </button>
+            )}
+            {showCollapseButton && (
+              <button
+                className={`btn${collapsed ? " btn-collapsed" : ""}`}
+                onClick={toggleCollapse}
+                title={collapsed ? "展开" : "收起"}
+              >
+                &#9776;
+              </button>
+            )}
+            {showCloseButton && (
+              <button className="btn btn-close" onClick={handleClose} title="关闭">
+                &#10005;
+              </button>
+            )}
+          </div>
+        </header>
+        <div className="widget-body" style={collapsed ? { display: "none" } : undefined}>{children}</div>
+      </div>
+    </WidgetProvider>
   );
 }

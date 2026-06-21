@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { GitStatus, GitDiff, GitBranch, GitLogEntry, SubmoduleInfo, AppSettings, AmkrMetrics, WindowState } from "./types";
+import type { GitStatus, GitDiff, GitBranch, GitLogEntry, SubmoduleInfo, AppSettings, AmkrMetrics, WindowState, SystemMetrics } from "./types";
 
 export async function getStatus(repoPath?: string): Promise<GitStatus> {
   return invoke<GitStatus>("get_status", { repoPath: repoPath ?? null });
@@ -174,6 +174,10 @@ export async function startAmkrWs(): Promise<void> {
 
 export async function stopAmkrWs(): Promise<void> {
   return invoke<void>("stop_amkr_ws");
+}
+
+export async function fetchSystemMetrics(): Promise<SystemMetrics | null> {
+  return invoke<SystemMetrics | null>("fetch_system_metrics");
 }
 
 export async function watchGitRepo(repoPath: string): Promise<void> {

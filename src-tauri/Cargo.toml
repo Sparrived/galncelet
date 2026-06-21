@@ -24,6 +24,7 @@ regex = "1"
 winreg = "0.55"
 dirs = "6"
 uiautomation = "0.16"
+sysinfo = "0.30"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

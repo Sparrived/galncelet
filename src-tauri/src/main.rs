@@ -10,6 +10,7 @@ mod page_notes;
 mod page_url;
 mod plugins;
 mod settings;
+mod system_monitor;
 mod tray;
 mod window_attach;
 
@@ -18,6 +19,7 @@ use tokio::sync::Mutex;
 use tauri::Manager;
 use git_watcher::GitWatcherManager;
 use window_attach::AttachState;
+use system_monitor::SystemMonitorState;
 
 /// Create a widget window with standard glass-panel styling.
 /// If saved position/height exist in settings, they are restored.
@@ -398,6 +400,10 @@ fn main() {
             let amkr_ws_handle: amkr::AmkrWsHandle = Arc::new(Mutex::new(None));
             app.manage(amkr_ws_handle);
 
+            // System monitor state
+            let system_monitor = Arc::new(SystemMonitorState::new());
+            app.manage(system_monitor);
+
             // Create widget windows from plugin manifests (zero hardcoded knowledge)
             let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
             println!("[setup] creating widget windows...");
@@ -525,6 +531,7 @@ fn main() {
             page_notes::get_ws_port,
             browser_ext::open_extension_dir,
             browser_ext::launch_browser_with_extension,
+            system_monitor::fetch_system_metrics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

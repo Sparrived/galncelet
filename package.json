@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:frontend": "vite --host",
+    "dev:rust": "cd src-tauri && cargo run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.6.0",

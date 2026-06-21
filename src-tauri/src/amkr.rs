@@ -76,7 +76,7 @@ pub async fn fetch_amkr_metrics() -> Result<Option<serde_json::Value>, String> {
     let port = config.port.unwrap_or(8000);
     let api_key = config.local_api_key.unwrap_or_default();
 
-    let url = format!("http://{}:{}/metrics?hours=24", host, port);
+    let url = format!("http://{}:{}/metrics", host, port);
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))

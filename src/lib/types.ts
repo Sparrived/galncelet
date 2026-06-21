@@ -158,3 +158,75 @@ export interface AmkrKeyStateChange {
     disabled: boolean;
   };
 }
+
+/** CPU 信息 */
+export interface CpuInfo {
+  /** CPU 使用率 (%) */
+  usage: number;
+  /** CPU 核心数 */
+  cores: number;
+  /** CPU 频率 (Hz) */
+  frequency: number;
+  /** CPU 温度 (°C)，可能为 null */
+  temperature: number | null;
+}
+
+/** 内存信息 */
+export interface MemoryInfo {
+  /** 已用内存 (bytes) */
+  used: number;
+  /** 总内存 (bytes) */
+  total: number;
+  /** 内存使用率 (0-1) */
+  usage: number;
+}
+
+/** GPU 信息 */
+export interface GpuInfo {
+  /** GPU 名称 */
+  name: string;
+  /** GPU 使用率 (%) */
+  usage: number;
+  /** 已用显存 (bytes) */
+  memory_used: number;
+  /** 总显存 (bytes) */
+  memory_total: number;
+  /** GPU 温度 (°C)，可能为 null */
+  temperature: number | null;
+}
+
+/** 磁盘信息 */
+export interface DiskInfo {
+  /** 已用磁盘空间 (bytes) */
+  used: number;
+  /** 总磁盘空间 (bytes) */
+  total: number;
+  /** 磁盘使用率 (0-1) */
+  usage: number;
+}
+
+/** 网络信息 */
+export interface NetworkInfo {
+  /** 总上传字节数 */
+  upload_bytes: number;
+  /** 总下载字节数 */
+  download_bytes: number;
+  /** 上传速度 (bytes/s) */
+  upload_speed: number;
+  /** 下载速度 (bytes/s) */
+  download_speed: number;
+}
+
+/** 系统性能指标 */
+export interface SystemMetrics {
+  /** CPU 信息 */
+  cpu: CpuInfo;
+  /** 内存信息 */
+  memory: MemoryInfo;
+  /** GPU 信息（可能为 null 如果没有检测到） */
+  gpu: GpuInfo | null;
+  /** 磁盘信息 */
+  disk: DiskInfo;
+  /** 网络信息 */
+  network: NetworkInfo;
+}

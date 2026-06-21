@@ -12,10 +12,13 @@ fn main() {
 
     if manifest_dir.exists() {
         for entry in fs::read_dir(manifest_dir).unwrap().flatten() {
-            let manifest_path = entry.path().join("manifest.json");
-            if manifest_path.exists() {
-                let content = fs::read_to_string(&manifest_path).unwrap();
-                manifests.push(content);
+            let path = entry.path();
+            if path.is_dir() {
+                let manifest_path = path.join("manifest.json");
+                if manifest_path.exists() {
+                    let content = fs::read_to_string(&manifest_path).unwrap();
+                    manifests.push(content);
+                }
             }
         }
     }

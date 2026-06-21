@@ -52,7 +52,7 @@ html, body, #root {
   -webkit-backdrop-filter: blur(40px) saturate(1.6);
   border-left: 1px solid var(--glass-border);
   border-radius: var(--radius) 0 0 var(--radius);
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* ===== Widget Shell ===== */
@@ -60,7 +60,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .widget-header {
@@ -93,7 +93,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* ===== Header ===== */
@@ -221,6 +221,7 @@ html, body, #root {
 .dashboard-body {
   padding: 4px 10px;
   overflow: visible;
+  min-height: min-content;
 }
 
 .panel-header {
