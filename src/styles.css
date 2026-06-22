@@ -2041,7 +2041,9 @@ html, body, #root {
 
 .rg-fill {
   stroke: var(--rg-color);
-  transition: d 0.4s ease;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 0.6s ease;
 }
 
 .rg-label {
