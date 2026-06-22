@@ -158,10 +158,11 @@ export function WidgetShell({
           emit(`snap:clear:${oldTarget}`, {}).catch(() => {});
         }
         snapWidget(winLabel, pendingSnap.target, pendingSnap.edge, pendingSnap.offset).catch(() => {});
-        setSnapEdge(pendingSnap.edge);
+        // A shows glow on its own contact edge (opposite of snap edge)
+        setSnapEdge(OPPOSITE_EDGE[pendingSnap.edge]);
         snapTargetRef.current = pendingSnap.target;
-        // Notify target to show glow on the opposite edge
-        emit(`snap:notify:${pendingSnap.target}`, { edge: OPPOSITE_EDGE[pendingSnap.edge] }).catch(() => {});
+        // B shows glow on the edge A is attached to
+        emit(`snap:notify:${pendingSnap.target}`, { edge: pendingSnap.edge }).catch(() => {});
         snapCooldownRef.current = true;
         setTimeout(() => { snapCooldownRef.current = false; }, 300);
         pendingSnap = null;
@@ -252,7 +253,9 @@ export function WidgetShell({
         }
 
         if (bestEdge && bestDist < SNAP_THRESHOLD) {
-          setSnapEdge(bestEdge);
+          // Preview glow on A's contact edge (opposite of snap edge)
+          const glowEdge = ({ Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" } as Record<SnapEdge, SnapEdge>)[bestEdge];
+          setSnapEdge(glowEdge);
           pendingSnap = { target: bestTarget, edge: bestEdge, offset: bestOffset };
         } else {
           // No edge nearby — clear preview glow
@@ -349,7 +352,7 @@ export function WidgetShell({
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setMenuPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    setMenuPos({ x: e.clientX - rect.left + 2, y: e.clientY - rect.top + 4 });
   }, []);
 
   const closeMenu = useCallback(() => setMenuPos(null), []);
