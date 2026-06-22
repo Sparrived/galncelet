@@ -288,9 +288,11 @@ export function WidgetShell({
   const handleClose = useCallback(async () => {
     try {
       if (onClose) await onClose();
+      // Reset saved position so widget reopens at default location
+      saveWindowState(pluginId, { x: null, y: null, height: null }).catch(() => {});
       await win.hide();
     } catch {}
-  }, [win, onClose]);
+  }, [win, onClose, pluginId]);
 
   const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
 
