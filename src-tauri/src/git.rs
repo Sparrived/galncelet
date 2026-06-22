@@ -197,24 +197,23 @@ fn parse_status_porcelain(raw: &[u8]) -> Vec<GitFileEntry> {
         }
 
         // For porcelain v2, lines start with 1 or 2 (regular/renamed/copied)
+        // Format: 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+        //         2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <origPath>\t<path>
         if line_str.starts_with("1 ") || line_str.starts_with("2 ") {
             let parts: Vec<&str> = line_str.splitn(3, ' ').collect();
             if parts.len() < 3 {
                 continue;
             }
-            let rest = parts[2]; // everything after "1 " or "2 "
-
-            // rest format: XY sub mH mI mW hH hI [Xscore origPath<tab>]path
-            // XY is 2 chars at position 0-1
-            if rest.len() < 2 {
+            // parts[1] = XY (2-char index+worktree status)
+            let xy = parts[1];
+            if xy.len() < 2 {
                 continue;
             }
-            let xy = &rest[..2];
             let x = xy.chars().nth(0).unwrap_or('.');
             let y = xy.chars().nth(1).unwrap_or('.');
 
-            // Parse remaining fields to find the path
-            let fields: Vec<&str> = rest[3..].split(' ').collect(); // skip XY + space
+            // parts[2] = sub mH mI mW hH hI ...path
+            let fields: Vec<&str> = parts[2].split(' ').collect();
 
             let (path, _status_code) = if line_str.starts_with("2 ") {
                 // Renamed/copied - path is last field, may have tab
