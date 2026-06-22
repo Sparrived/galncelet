@@ -13,6 +13,7 @@ mod settings;
 mod system_monitor;
 mod tray;
 mod window_attach;
+mod clipboard_history;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -440,6 +441,11 @@ fn main() {
             let system_monitor = Arc::new(SystemMonitorState::new());
             app.manage(system_monitor);
 
+            // Clipboard history
+            let clipboard_state = Arc::new(clipboard_history::ClipboardHistoryState::new());
+            app.manage(clipboard_state.clone());
+            clipboard_history::start_monitor(clipboard_state);
+
             // Create widget windows from plugin manifests (zero hardcoded knowledge)
             let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
             println!("[setup] creating widget windows...");
@@ -576,6 +582,10 @@ fn main() {
             set_attach_whitelist,
             set_attach_remember,
             get_browser_url,
+            clipboard_history::get_clipboard_history,
+            clipboard_history::copy_to_clipboard,
+            clipboard_history::delete_clipboard_entry,
+            clipboard_history::clear_clipboard_history,
             window_attach::list_visible_windows,
             window_attach::snap_widget,
             window_attach::unsnap_widget,

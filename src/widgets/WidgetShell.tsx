@@ -6,7 +6,6 @@ import { HEADER_H, WidgetProvider } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
 
 const SNAP_THRESHOLD = 20;
-const UNSNAP_THRESHOLD = 40;
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -294,7 +293,7 @@ export function WidgetShell({
       const w = Math.round((window.screen.width - 360) / 2);
       const h = Math.round((window.screen.height - 400) / 2);
       win.setPosition(new LogicalPosition(Math.max(0, w), Math.max(0, h))).catch(() => {});
-      saveWindowState(pluginId, { x: null, y: null, height: null }).catch(() => {});
+      saveWindowState(pluginId, { x: undefined, y: undefined, height: undefined }).catch(() => {});
       await win.hide();
     } catch {}
   }, [win, winLabel, onClose, pluginId]);

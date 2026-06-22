@@ -25,6 +25,7 @@ winreg = "0.55"
 dirs = "6"
 uiautomation = "0.16"
 sysinfo = "0.30"
+arboard = "3"
 nvml-wrapper = "0.10"
 wmi = "0.16"
 

@@ -2643,3 +2643,142 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+
+/* ===== Clipboard History ===== */
+.cb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  overflow: hidden;
+}
+
+.cb-search {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cb-search-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.cb-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.cb-search-input:focus {
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.cb-clear-btn {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--color-deleted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cb-clear-btn:hover {
+  background: rgba(248, 113, 113, 0.25);
+}
+
+.cb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.cb-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.cb-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.cb-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 16px 0;
+}
+
+.cb-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  background: var(--mcha-surface);
+  border: 1px solid var(--mcha-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.cb-item-copied {
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.cb-time {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 32px;
+  text-align: center;
+}
+
+.cb-text {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cb-del-btn {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.cb-item:hover .cb-del-btn {
+  opacity: 1;
+}
+
+.cb-del-btn:hover {
+  color: var(--color-deleted);
+  background: rgba(248, 113, 113, 0.12);
+}
