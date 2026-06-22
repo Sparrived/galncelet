@@ -104,6 +104,15 @@ html, body, #root {
   overflow: visible;
 }
 
+/* ── Widget Snap Indicators ── */
+.widget-snapped {
+  transition: box-shadow 0.2s ease;
+}
+.snap-edge-bottom { box-shadow: 0 2px 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
+.snap-edge-top    { box-shadow: 0 -2px 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
+.snap-edge-right  { box-shadow: 2px 0 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
+.snap-edge-left   { box-shadow: -2px 0 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
+
 /* ===== Header ===== */
 .header {
   display: flex;

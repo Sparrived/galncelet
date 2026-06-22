@@ -141,10 +141,6 @@ export async function setAttachRemember(windowLabel: string, remember: boolean):
   return invoke<void>("set_attach_remember", { windowLabel, remember });
 }
 
-export async function setHideInFullscreen(enabled: boolean): Promise<void> {
-  return invoke<void>("set_hide_in_fullscreen", { enabled });
-}
-
 export interface WindowEntry {
   title: string;
   process: string;
@@ -204,4 +200,41 @@ export interface GitCommandResult {
 
 export async function execGitCommand(repoRoot: string, command: string): Promise<GitCommandResult> {
   return invoke<GitCommandResult>("exec_git_command", { repoRoot, command });
+}
+
+// ─── Widget Snap ───
+
+export type SnapEdge = "Top" | "Bottom" | "Left" | "Right";
+
+export interface SnapTarget {
+  target_label: string;
+  edge: SnapEdge;
+  offset: number;
+}
+
+export interface WidgetRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export async function snapWidget(label: string, targetLabel: string, edge: SnapEdge, offset: number): Promise<void> {
+  return invoke<void>("snap_widget", { label, targetLabel, edge, offset });
+}
+
+export async function unsnapWidget(label: string): Promise<void> {
+  return invoke<void>("unsnap_widget", { label });
+}
+
+export async function getSnapInfo(label: string): Promise<SnapTarget | null> {
+  return invoke<SnapTarget | null>("get_snap_info", { label });
+}
+
+export async function getAllWidgetRects(): Promise<Record<string, WidgetRect>> {
+  return invoke<Record<string, WidgetRect>>("get_all_widget_rects");
+}
+
+export async function moveSnapGroup(label: string, dx: number, dy: number): Promise<void> {
+  return invoke<void>("move_snap_group", { label, dx, dy });
 }

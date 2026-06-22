@@ -22,6 +22,33 @@ use windows::Win32::UI::WindowsAndMessaging::{
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 
+/// Which edge of the target widget to snap to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SnapEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// A widget's snap relationship: snapped to another widget's edge.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapTarget {
+    pub target_label: String,
+    pub edge: SnapEdge,
+    /// The perpendicular coordinate at snap time (x for top/bottom, y for left/right).
+    pub offset: i32,
+}
+
+/// Physical rect of a widget window.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WidgetRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
 pub struct AttachState {
     pub running: Arc<Mutex<bool>>,
     pub card_width: Arc<Mutex<i32>>,
@@ -33,8 +60,8 @@ pub struct AttachState {
     pub attach_remember: Arc<Mutex<HashMap<String, bool>>>,
     /// Current browser URL (shared with frontend)
     pub current_url: Arc<Mutex<String>>,
-    /// Hide all widgets when the focused window is fullscreen
-    pub hide_in_fullscreen: Arc<Mutex<bool>>,
+    /// Widget-to-widget snap relationships: label → snap target.
+    pub snap_groups: Arc<Mutex<HashMap<String, SnapTarget>>>,
 }
 
 impl AttachState {
@@ -47,7 +74,7 @@ impl AttachState {
             attach_whitelist: Arc::new(Mutex::new(HashMap::new())),
             attach_remember: Arc::new(Mutex::new(HashMap::new())),
             current_url: Arc::new(Mutex::new(String::new())),
-            hide_in_fullscreen: Arc::new(Mutex::new(true)),
+            snap_groups: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -78,27 +105,6 @@ fn is_own_window(hwnd: HWND) -> bool {
     let mut pid: u32 = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
     pid == unsafe { GetCurrentProcessId() }
-}
-
-
-/// Check if a window is fullscreen (covers the entire monitor).
-#[cfg(target_os = "windows")]
-fn is_fullscreen(hwnd: HWND) -> bool {
-    let mut rect = RECT::default();
-    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
-        return false;
-    }
-    let hmonitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    let mut mi = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() {
-        return false;
-    }
-    let mon = mi.rcMonitor;
-    rect.left <= mon.left && rect.top <= mon.top
-        && rect.right >= mon.right && rect.bottom >= mon.bottom
 }
 
 /// Reposition all enabled, non-collapsed widgets next to the given window.
@@ -323,18 +329,7 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
             if dirty || fg_changed {
                 last_fg = fg.0 as isize;
                 if !is_own_window(fg) {
-                    let hif = *state.hide_in_fullscreen.lock().unwrap();
-                    if hif && is_fullscreen(fg) {
-                        // Hide all widget windows when foreground is fullscreen
-                        let enabled = state.attach_enabled.lock().unwrap().clone();
-                        for label in enabled.keys() {
-                            if let Some(win) = app_handle.get_webview_window(label) {
-                                let _ = win.hide();
-                            }
-                        }
-                    } else {
-                        reposition_widgets(&app_handle, fg, &state);
-                    }
+                    reposition_widgets(&app_handle, fg, &state);
                 }
             }
 
@@ -371,4 +366,140 @@ pub fn start_attach_loop(_app_handle: tauri::AppHandle, _state: Arc<AttachState>
 #[allow(dead_code)]
 pub fn stop_attach_loop(state: &AttachState) {
     *state.running.lock().unwrap() = false;
+}
+
+// ─── Widget-to-Widget Snap Commands ───
+
+fn get_widget_rect(app: &tauri::AppHandle, label: &str) -> Option<WidgetRect> {
+    let win = app.get_webview_window(label)?;
+    let pos = win.outer_position().ok()?;
+    let size = win.outer_size().ok()?;
+    Some(WidgetRect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 })
+}
+
+/// Snap a widget to another widget's edge. Moves the widget to align.
+#[tauri::command]
+pub fn snap_widget(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<AttachState>>,
+    label: String,
+    target_label: String,
+    edge: SnapEdge,
+    offset: i32,
+) {
+    // Record snap relationship
+    state.snap_groups.lock().unwrap().insert(label.clone(), SnapTarget {
+        target_label: target_label.clone(),
+        edge,
+        offset,
+    });
+
+    // Reposition widget to align with target edge
+    if let (Some(_my), Some(target)) = (get_widget_rect(&app, &label), get_widget_rect(&app, &target_label)) {
+        let (x, y) = match edge {
+            SnapEdge::Bottom => (target.x, target.y + target.h),
+            SnapEdge::Top => (target.x, target.y - _my.h),
+            SnapEdge::Right => (target.x + target.w, target.y),
+            SnapEdge::Left => (target.x - _my.w, target.y),
+        };
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.set_position(tauri::Position::Physical(
+                tauri::PhysicalPosition { x, y },
+            ));
+        }
+    }
+}
+
+/// Remove snap relationship for a widget.
+#[tauri::command]
+pub fn unsnap_widget(
+    state: tauri::State<'_, std::sync::Arc<AttachState>>,
+    label: String,
+) {
+    state.snap_groups.lock().unwrap().remove(&label);
+}
+
+/// Get snap info for a widget.
+#[tauri::command]
+pub fn get_snap_info(
+    state: tauri::State<'_, std::sync::Arc<AttachState>>,
+    label: String,
+) -> Option<SnapTarget> {
+    state.snap_groups.lock().unwrap().get(&label).cloned()
+}
+
+/// Get physical rects of all visible widget windows.
+#[tauri::command]
+pub fn get_all_widget_rects(app: tauri::AppHandle) -> HashMap<String, WidgetRect> {
+    let mut rects = HashMap::new();
+    for (label, win) in app.webview_windows() {
+        if label.starts_with("widget-") {
+            if win.is_visible().unwrap_or(false) {
+                if let Ok(pos) = win.outer_position() {
+                    if let Ok(size) = win.outer_size() {
+                        rects.insert(label, WidgetRect {
+                            x: pos.x, y: pos.y,
+                            w: size.width as i32, h: size.height as i32,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    rects
+}
+
+/// Move a widget and all widgets snapped to it by (dx, dy) physical pixels.
+#[tauri::command]
+pub fn move_snap_group(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<AttachState>>,
+    label: String,
+    dx: i32,
+    dy: i32,
+) {
+    let snap = state.snap_groups.lock().unwrap();
+    // Find all widgets snapped TO this widget (reverse lookup)
+    let dependents: Vec<String> = snap.iter()
+        .filter(|(_, t)| t.target_label == label)
+        .map(|(k, _)| k.clone())
+        .collect();
+    drop(snap);
+
+    for dep in &dependents {
+        if let Some(win) = app.get_webview_window(dep) {
+            if let Ok(pos) = win.outer_position() {
+                let _ = win.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition { x: pos.x + dx, y: pos.y + dy },
+                ));
+                // Recurse for chains (A→B→C)
+                move_snap_group_inner(&app, &state, dep.clone(), dx, dy);
+            }
+        }
+    }
+}
+
+fn move_snap_group_inner(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, std::sync::Arc<AttachState>>,
+    label: String,
+    dx: i32,
+    dy: i32,
+) {
+    let snap = state.snap_groups.lock().unwrap();
+    let dependents: Vec<String> = snap.iter()
+        .filter(|(_, t)| t.target_label == label)
+        .map(|(k, _)| k.clone())
+        .collect();
+    drop(snap);
+
+    for dep in &dependents {
+        if let Some(win) = app.get_webview_window(dep) {
+            if let Ok(pos) = win.outer_position() {
+                let _ = win.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition { x: pos.x + dx, y: pos.y + dy },
+                ));
+            }
+        }
+    }
 }

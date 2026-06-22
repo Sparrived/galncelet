@@ -1,9 +1,12 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
+
+const SNAP_THRESHOLD = 20;
+const UNSNAP_THRESHOLD = 40;
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -35,6 +38,7 @@ export function WidgetShell({
   const [collapsed, setCollapsed] = useState(false);
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
   const [attachRemember, setAttachRememberState] = useState(defaultAttachRemember);
+  const [snapEdge, setSnapEdge] = useState<SnapEdge | null>(null);
   const win = getCurrentWindow();
   const winLabel = win.label;
   const pluginId = winLabel.replace("widget-", "");
@@ -43,6 +47,9 @@ export function WidgetShell({
   const preCollapseHeight = useRef<number | null>(null);
   const actualHeight = useRef<number>(0);
   const collapsedRef = useRef(false);
+  const prevPosRef = useRef<{ x: number; y: number } | null>(null);
+  const snapEdgeRef = useRef<SnapEdge | null>(null);
+  snapEdgeRef.current = snapEdge;
 
   // Refs to avoid stale closures in saveState
   const attachEnabledRef = useRef(attachEnabled);
@@ -118,10 +125,74 @@ export function WidgetShell({
     }).catch(() => {});
   }, []);
 
-  // Track window position and size changes
+  // Track window position and size changes + snap detection
   useEffect(() => {
-    const unlistenMove = win.onMoved(() => {
+    const unlistenMove = win.onMoved(async () => {
       saveState({});
+      try {
+        const pos = await win.outerPosition();
+        const scale = window.devicePixelRatio || 1;
+        const px = Math.round(pos.x / scale);
+        const py = Math.round(pos.y / scale);
+
+        // If snapped, move the snap group by the delta
+        if (snapEdgeRef.current && prevPosRef.current) {
+          const dx = pos.x - Math.round(prevPosRef.current.x * scale);
+          const dy = pos.y - Math.round(prevPosRef.current.y * scale);
+          if (dx !== 0 || dy !== 0) {
+            moveSnapGroup(winLabel, dx, dy).catch(() => {});
+          }
+        }
+        prevPosRef.current = { x: px, y: py };
+
+        // Check proximity to other widgets
+        const rects = await getAllWidgetRects();
+        const my = rects[winLabel];
+        if (!my) return;
+
+        let bestDist = Infinity;
+        let bestEdge: SnapEdge | null = null;
+        let bestTarget = "";
+        let bestOffset = 0;
+
+        for (const [label, r] of Object.entries(rects)) {
+          if (label === winLabel) continue;
+          // Bottom edge of my widget near top edge of target
+          const dBottom = Math.abs((my.y + my.h) - r.y);
+          if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
+          }
+          // Top edge near bottom edge of target
+          const dTop = Math.abs(my.y - (r.y + r.h));
+          if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
+          }
+          // Right edge near left edge of target
+          const dRight = Math.abs((my.x + my.w) - r.x);
+          if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
+          }
+          // Left edge near right edge of target
+          const dLeft = Math.abs(my.x - (r.x + r.w));
+          if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
+          }
+        }
+
+        if (bestEdge && bestDist < SNAP_THRESHOLD) {
+          // Snap!
+          if (snapEdgeRef.current !== bestEdge) {
+            snapWidget(winLabel, bestTarget, bestEdge, bestOffset).catch(() => {});
+            setSnapEdge(bestEdge);
+          }
+        } else if (snapEdgeRef.current) {
+          // Check if still close enough to stay snapped
+          if (bestDist > UNSNAP_THRESHOLD) {
+            unsnapWidget(winLabel).catch(() => {});
+            setSnapEdge(null);
+          }
+        }
+      } catch {}
     });
     const unlistenResize = win.onResized(() => {
       if (collapsedRef.current) return;
@@ -185,7 +256,7 @@ export function WidgetShell({
 
   return (
     <WidgetProvider value={contextValue}>
-      <div className="widget">
+      <div className={`widget${snapEdge ? ` widget-snapped snap-edge-${snapEdge.toLowerCase()}` : ""}`}>
         <header className="widget-header">
           <span className="widget-title">{title}</span>
           <div className="widget-header-right">
