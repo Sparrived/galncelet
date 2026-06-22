@@ -3,6 +3,7 @@ import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/
 import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider } from "./WidgetContext";
+import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -185,36 +186,16 @@ export function WidgetShell({
           <div className="widget-header-right">
             {headerRight}
             {showAttachButton && attachEnabled && (
-              <button
-                className={`btn btn-remember${attachRemember ? " btn-remember-on" : ""}`}
-                onClick={toggleRemember}
-                title={attachRemember ? "跟随位置" : "记住位置"}
-              >
-                &#128204;
-              </button>
+              <RememberButton active={attachRemember} onClick={toggleRemember} />
             )}
             {showAttachButton && (
-              <button
-                className={`btn btn-attach${attachEnabled ? " btn-attach-on" : ""}`}
-                onClick={toggleAttach}
-                title={attachEnabled ? "停止吸附" : "开启吸附"}
-              >
-                &#128279;
-              </button>
+              <AttachButton enabled={attachEnabled} onClick={toggleAttach} />
             )}
             {showCollapseButton && (
-              <button
-                className={`btn${collapsed ? " btn-collapsed" : ""}`}
-                onClick={toggleCollapse}
-                title={collapsed ? "展开" : "收起"}
-              >
-                &#9776;
-              </button>
+              <CollapseButton collapsed={collapsed} onClick={toggleCollapse} />
             )}
             {showCloseButton && (
-              <button className="btn btn-close" onClick={handleClose} title="关闭">
-                &#10005;
-              </button>
+              <CloseButton onClick={handleClose} />
             )}
           </div>
         </header>
