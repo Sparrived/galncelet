@@ -1,6 +1,8 @@
 use serde::Serialize;
 use sysinfo::{Components, System};
 use std::sync::Mutex;
+use nvml_wrapper::Nvml;
+use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
 
 /// 系统监控状态
 pub struct SystemMonitorState {
@@ -8,6 +10,7 @@ pub struct SystemMonitorState {
     networks: Mutex<sysinfo::Networks>,
     disks: Mutex<sysinfo::Disks>,
     last_network: Mutex<Option<NetworkSnapshot>>,
+    nvml: Mutex<Option<Nvml>>,
 }
 
 #[derive(Clone, Debug)]
@@ -71,11 +74,19 @@ impl SystemMonitorState {
         sys.refresh_all();
         let networks = sysinfo::Networks::new_with_refreshed_list();
         let disks = sysinfo::Disks::new_with_refreshed_list();
+
+        // 尝试初始化 NVML（需要 NVIDIA 驱动）
+        let nvml = match Nvml::init() {
+            Ok(n) => Some(n),
+            Err(_) => None,
+        };
+
         Self {
             sys: Mutex::new(sys),
             networks: Mutex::new(networks),
             disks: Mutex::new(disks),
             last_network: Mutex::new(None),
+            nvml: Mutex::new(nvml),
         }
     }
 
@@ -86,6 +97,30 @@ impl SystemMonitorState {
         networks.refresh();
         let mut disks = self.disks.lock().unwrap();
         disks.refresh();
+    }
+
+    /// 通过 NVML 获取 GPU 信息
+    fn get_gpu_info(&self) -> Option<GpuInfo> {
+        let nvml_guard = self.nvml.lock().unwrap();
+        let nvml = nvml_guard.as_ref()?;
+
+        let device = nvml.device_by_index(0).ok()?;
+
+        let name = device.name().ok()?;
+        let utilization = device.utilization_rates().ok()?;
+        let memory = device.memory_info().ok()?;
+        let temperature = device.temperature(TemperatureSensor::Gpu).ok().map(|t| t as f32);
+
+        let memory_total = memory.total;
+        let memory_used = memory.used;
+
+        Some(GpuInfo {
+            name,
+            usage: utilization.gpu as f32,
+            memory_used,
+            memory_total,
+            temperature,
+        })
     }
 
     pub fn get_metrics(&self) -> SystemMetrics {
@@ -130,8 +165,8 @@ impl SystemMonitorState {
             usage: memory_usage,
         };
 
-        // GPU - 尝试检测，但可能失败
-        let gpu = None; // GPU 检测需要额外的库支持
+        // GPU — 通过 NVML 查询
+        let gpu = self.get_gpu_info();
 
         // Disk - 使用主磁盘
         let disk = disks.iter()
