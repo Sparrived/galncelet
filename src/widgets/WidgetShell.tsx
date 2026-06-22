@@ -1,6 +1,7 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
+import { emit, listen } from "@tauri-apps/api/event";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, getSnapInfo, type SnapEdge } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
@@ -38,6 +39,7 @@ export function WidgetShell({
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
   const [attachRemember, setAttachRememberState] = useState(defaultAttachRemember);
   const [snapEdge, setSnapEdge] = useState<SnapEdge | null>(null);
+  const [incomingEdge, setIncomingEdge] = useState<SnapEdge | null>(null);
   const win = getCurrentWindow();
   const winLabel = win.label;
   const pluginId = winLabel.replace("widget-", "");
@@ -146,16 +148,26 @@ export function WidgetShell({
   useEffect(() => {
     let pendingSnap: { target: string; edge: SnapEdge; offset: number } | null = null;
 
+    const OPPOSITE_EDGE: Record<SnapEdge, SnapEdge> = { Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" };
+
     const commitSnap = () => {
       if (pendingSnap) {
+        const oldTarget = snapTargetRef.current;
+        // Clear old target's incoming glow
+        if (oldTarget && oldTarget !== pendingSnap.target) {
+          emit(`snap:clear:${oldTarget}`, {}).catch(() => {});
+        }
         snapWidget(winLabel, pendingSnap.target, pendingSnap.edge, pendingSnap.offset).catch(() => {});
         setSnapEdge(pendingSnap.edge);
         snapTargetRef.current = pendingSnap.target;
+        // Notify target to show glow on the opposite edge
+        emit(`snap:notify:${pendingSnap.target}`, { edge: OPPOSITE_EDGE[pendingSnap.edge] }).catch(() => {});
         snapCooldownRef.current = true;
         setTimeout(() => { snapCooldownRef.current = false; }, 300);
         pendingSnap = null;
       } else if (snapEdgeRef.current && snapTargetRef.current) {
         // Was snapped but dragged away — unsnap on release
+        emit(`snap:clear:${snapTargetRef.current}`, {}).catch(() => {});
         unsnapWidget(winLabel).catch(() => {});
         setSnapEdge(null);
         snapTargetRef.current = "";
@@ -166,6 +178,20 @@ export function WidgetShell({
 
     const handleMouseUp = () => { commitSnap(); };
     document.addEventListener("mouseup", handleMouseUp);
+
+    // Listen for incoming snap notifications (when another widget snaps TO us)
+    const unlistenNotify = listen(`snap:notify:${winLabel}`, (e) => {
+      const { edge } = e.payload as { edge: SnapEdge };
+      setIncomingEdge(edge);
+    });
+    const unlistenClear = listen(`snap:clear:${winLabel}`, () => {
+      setIncomingEdge(null);
+    });
+
+    // On mount, check if we already have an incoming snap
+    getSnapInfo(winLabel).then((info) => {
+      // We don't have a "reverse" query, so we check all widgets later
+    }).catch(() => {});
 
     const unlistenMove = win.onMoved(async () => {
       saveState({});
@@ -224,10 +250,12 @@ export function WidgetShell({
         if (bestEdge && bestDist < SNAP_THRESHOLD) {
           setSnapEdge(bestEdge);
           pendingSnap = { target: bestTarget, edge: bestEdge, offset: bestOffset };
-        } else if (!snapEdgeRef.current) {
+        } else {
+          // No edge nearby — clear preview glow
           setSnapEdge(null);
           pendingSnap = null;
         }
+
       } catch {}
     });
     const unlistenResize = win.onResized(() => {
@@ -239,6 +267,8 @@ export function WidgetShell({
     });
     return () => {
       document.removeEventListener("mouseup", handleMouseUp);
+      unlistenNotify.then((fn) => fn());
+      unlistenClear.then((fn) => fn());
       unlistenMove.then((fn) => fn());
       unlistenResize.then((fn) => fn());
     };
@@ -285,9 +315,13 @@ export function WidgetShell({
   const handleClose = useCallback(async () => {
     try {
       if (onClose) await onClose();
-      // Remove snap relationships
+      // Remove snap relationships and notify target
+      if (snapTargetRef.current) {
+        emit(`snap:clear:${snapTargetRef.current}`, {}).catch(() => {});
+      }
       unsnapWidget(winLabel).catch(() => {});
       setSnapEdge(null);
+      setIncomingEdge(null);
       snapTargetRef.current = "";
       // Move window to screen center, then clear saved position
       const w = Math.round((window.screen.width - 360) / 2);
@@ -302,7 +336,7 @@ export function WidgetShell({
 
   return (
     <WidgetProvider value={contextValue}>
-      <div className={`widget${snapEdge ? ` widget-snapped snap-edge-${snapEdge.toLowerCase()}` : ""}`}>
+      <div className={`widget${snapEdge ? ` widget-snapped snap-edge-${snapEdge.toLowerCase()}` : ""}${incomingEdge ? ` widget-snapped snap-edge-${incomingEdge.toLowerCase()}` : ""}`}>
         <header className="widget-header">
           <span className="widget-title">{title}</span>
           <div className="widget-header-right">
