@@ -1972,42 +1972,35 @@ html, body, #root {
 /* ===== System Monitor — Mecha Style ===== */
 
 .sm-panel {
-  padding: 10px;
+  padding: 8px;
   overflow: visible;
   min-height: min-content;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 /* ── Gauge Grid ── */
 .sm-gauges {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 4px;
+  gap: 3px;
 }
 
 .sm-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 6px 0 4px;
+  padding: 4px 0 3px;
   background: var(--mcha-surface);
   border: 1px solid var(--mcha-border);
   border-radius: 4px;
 }
 
-.sm-gauge-wrap {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
 /* ── Gauge Detail Row ── */
 .sm-details {
   display: flex;
-  gap: 8px;
-  margin-top: 2px;
+  gap: 6px;
 }
 
 .sm-detail {
@@ -2024,28 +2017,21 @@ html, body, #root {
 
 .sm-detail-val {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: -0.02em;
 }
 
 /* ── RadialGauge Component ── */
-.rg {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
 .rg-svg {
   display: block;
-  transform: rotate(0deg);
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--rg-color) 35%, transparent));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--rg-color) 30%, transparent));
   transition: filter 0.4s ease;
 }
 
 .rg-svg:hover {
-  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--rg-color) 55%, transparent));
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--rg-color) 50%, transparent));
 }
 
 .rg-track {
@@ -2059,36 +2045,32 @@ html, body, #root {
 }
 
 .rg-label {
-  margin-top: -6px;
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
-  color: var(--text-primary);
+  fill: var(--text-primary);
   letter-spacing: -0.03em;
-  text-shadow: 0 0 10px color-mix(in srgb, var(--mcha-cyan) 20%, transparent);
-  line-height: 1;
 }
 
 .rg-sub {
+  font-family: var(--font-mono);
   font-size: 8px;
   font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
+  fill: var(--text-muted);
   letter-spacing: 0.06em;
-  margin-top: -1px;
 }
 
 /* ── Network Section ── */
 .sm-net {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .sm-net-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sm-net-line {
@@ -2098,7 +2080,7 @@ html, body, #root {
 }
 
 .sm-net-label {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2117,7 +2099,7 @@ html, body, #root {
   flex-direction: column;
   align-items: center;
   gap: 0;
-  padding: 4px 0 3px;
+  padding: 3px 0 2px;
   background: var(--mcha-surface);
   border: 1px solid var(--mcha-border);
   border-radius: 3px;
@@ -2125,14 +2107,14 @@ html, body, #root {
 
 .sm-net-val {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.2;
 }
 
 .sm-net-sub {
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;

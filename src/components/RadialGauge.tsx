@@ -22,13 +22,13 @@ function arcPath(cx: number, cy: number, r: number, pct: number): string {
   return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
 }
 
-/** Circular SVG gauge — mecha style */
+/** Circular SVG gauge — mecha style, text centered inside ring */
 export function RadialGauge({
   value,
   label,
   color = "var(--mcha-cyan)",
-  size = 120,
-  stroke = 8,
+  size = 80,
+  stroke = 6,
   sub,
 }: RadialGaugeProps) {
   const center = size / 2;
@@ -36,34 +36,52 @@ export function RadialGauge({
   const clamped = Math.max(0, Math.min(100, value));
 
   return (
-    <div className="rg" style={{ width: size + 16, padding: "6px 0 0" }}>
-      <svg
-        className="rg-svg"
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        style={{ "--rg-color": color } as React.CSSProperties}
+    <svg
+      className="rg-svg"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      style={{ "--rg-color": color } as React.CSSProperties}
+    >
+      {/* Track ring */}
+      <circle
+        className="rg-track"
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        strokeWidth={stroke}
+      />
+      {/* Value arc */}
+      <path
+        className="rg-fill"
+        d={arcPath(center, center, radius, clamped)}
+        fill="none"
+        strokeWidth={stroke}
+        strokeLinecap="round"
+      />
+      {/* Center percentage */}
+      <text
+        className="rg-label"
+        x={center}
+        y={sub ? center - 3 : center + 1}
+        textAnchor="middle"
+        dominantBaseline="central"
       >
-        {/* Track ring */}
-        <circle
-          className="rg-track"
-          cx={center}
-          cy={center}
-          r={radius}
-          fill="none"
-          strokeWidth={stroke}
-        />
-        {/* Value arc */}
-        <path
-          className="rg-fill"
-          d={arcPath(center, center, radius, clamped)}
-          fill="none"
-          strokeWidth={stroke}
-          strokeLinecap="round"
-        />
-      </svg>
-      <div className="rg-label">{label}</div>
-      {sub && <div className="rg-sub">{sub}</div>}
-    </div>
+        {label}
+      </text>
+      {/* Sub label */}
+      {sub && (
+        <text
+          className="rg-sub"
+          x={center}
+          y={center + 11}
+          textAnchor="middle"
+          dominantBaseline="central"
+        >
+          {sub}
+        </text>
+      )}
+    </svg>
   );
 }
