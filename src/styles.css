@@ -491,6 +491,15 @@ html, body, #root {
   /* directory node */
 }
 
+.tree-dir-submodule > .tree-row .tree-dirname {
+  color: #c084fc;
+}
+
+.tree-dir-submodule > .tree-row .tree-chevron {
+  color: #c084fc;
+  opacity: 0.6;
+}
+
 .tree-row {
   display: flex;
   align-items: center;

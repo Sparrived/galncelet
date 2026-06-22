@@ -35,6 +35,8 @@ export interface TreeNode {
   statusCode?: string;
   /** Only set for files */
   staged?: boolean;
+  /** True if this directory is a git submodule */
+  isSubmodule?: boolean;
   children?: TreeNode[];
   expanded?: boolean;
 }

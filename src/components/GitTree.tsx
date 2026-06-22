@@ -72,7 +72,7 @@ function TreeItem({ node, onSelect, selectedPath, depth, actions }: TreeItemProp
 
   if (node.type === "dir") {
     return (
-      <li className="tree-dir">
+      <li className={`tree-dir${node.isSubmodule ? " tree-dir-submodule" : ""}`}>
         <div className="tree-row" onClick={() => setExpanded((e) => !e)}>
           <span className="tree-chevron">{expanded ? "▼" : "▶"}</span>
           <span className="tree-dirname">{node.name}</span>
