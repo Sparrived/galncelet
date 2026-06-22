@@ -2066,19 +2066,24 @@ html, body, #root {
 
 .sm-net-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 3px;
 }
 
 .sm-net-stat {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0;
-  padding: 3px 0 2px;
+  gap: 4px;
+  padding: 3px 6px;
   background: var(--mcha-surface);
   border: 1px solid var(--mcha-border);
   border-radius: 3px;
+}
+
+.sm-net-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .sm-net-val {
@@ -2087,14 +2092,15 @@ html, body, #root {
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .sm-net-sub {
   font-size: 7px;
   font-weight: 600;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  margin-left: auto;
 }
 
 /* ===== Manage Page ===== */
