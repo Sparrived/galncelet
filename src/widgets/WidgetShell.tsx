@@ -1,7 +1,6 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { emit, listen } from "@tauri-apps/api/event";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, setPluginVisible, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, getSnapInfo, type SnapEdge } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider, type ContextMenuItem } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
@@ -152,47 +151,59 @@ export function WidgetShell({
 
     const commitSnap = () => {
       if (pendingSnap) {
-        const oldTarget = snapTargetRef.current;
-        // Clear old target's incoming glow
-        if (oldTarget && oldTarget !== pendingSnap.target) {
-          emit(`snap:clear:${oldTarget}`, {}).catch(() => {});
-        }
+        // Set cooldown FIRST to prevent onMoved from interfering
+        snapCooldownRef.current = true;
         snapWidget(winLabel, pendingSnap.target, pendingSnap.edge, pendingSnap.offset).catch(() => {});
-        // A shows glow on its own contact edge (opposite of snap edge)
         setSnapEdge(OPPOSITE_EDGE[pendingSnap.edge]);
         snapTargetRef.current = pendingSnap.target;
-        // B shows glow on the edge A is attached to
-        emit(`snap:notify:${pendingSnap.target}`, { edge: pendingSnap.edge }).catch(() => {});
-        snapCooldownRef.current = true;
-        setTimeout(() => { snapCooldownRef.current = false; }, 300);
         pendingSnap = null;
+        setTimeout(() => { snapCooldownRef.current = false; }, 500);
       } else if (snapEdgeRef.current && snapTargetRef.current) {
-        // Was snapped but dragged away — unsnap on release
-        emit(`snap:clear:${snapTargetRef.current}`, {}).catch(() => {});
+        snapCooldownRef.current = true;
         unsnapWidget(winLabel).catch(() => {});
         setSnapEdge(null);
         snapTargetRef.current = "";
-        snapCooldownRef.current = true;
-        setTimeout(() => { snapCooldownRef.current = false; }, 300);
+        setIncomingEdge(null);
+        setTimeout(() => { snapCooldownRef.current = false; }, 500);
       }
     };
 
     const handleMouseUp = () => { commitSnap(); };
     document.addEventListener("mouseup", handleMouseUp);
 
-    // Listen for incoming snap notifications (when another widget snaps TO us)
-    const unlistenNotify = listen(`snap:notify:${winLabel}`, (e) => {
-      const { edge } = e.payload as { edge: SnapEdge };
-      setIncomingEdge(edge);
-    });
-    const unlistenClear = listen(`snap:clear:${winLabel}`, () => {
-      setIncomingEdge(null);
-    });
-
-    // On mount, check if we already have an incoming snap
-    getSnapInfo(winLabel).then(() => {
-      // We don't have a "reverse" query, so we check all widgets later
-    }).catch(() => {});
+    // Poll: check if any widget is snapped TO us (for incoming glow)
+    const pollIncoming = setInterval(async () => {
+      try {
+        const allRects = await getAllWidgetRects();
+        const myLabel = winLabel;
+        // Check all snap targets — if any target is us, show glow
+        for (const [label, rect] of Object.entries(allRects)) {
+          if (label === myLabel) continue;
+          // We can't directly query reverse snaps from frontend,
+          // so we check proximity: if another widget is exactly aligned with our edge
+          const my = allRects[myLabel];
+          if (!my || rect.attach_enabled) continue;
+          // Check if rect is exactly touching our edges
+          if (Math.abs(rect.y - (my.y + my.h)) < 2 && rect.x > my.x - rect.w && rect.x < my.x + my.w) {
+            setIncomingEdge("Bottom"); // They're at our bottom
+            return;
+          }
+          if (Math.abs((rect.y + rect.h) - my.y) < 2 && rect.x > my.x - rect.w && rect.x < my.x + my.w) {
+            setIncomingEdge("Top");
+            return;
+          }
+          if (Math.abs(rect.x - (my.x + my.w)) < 2 && rect.y > my.y - rect.h && rect.y < my.y + my.h) {
+            setIncomingEdge("Right");
+            return;
+          }
+          if (Math.abs((rect.x + rect.w) - my.x) < 2 && rect.y > my.y - rect.h && rect.y < my.y + my.h) {
+            setIncomingEdge("Left");
+            return;
+          }
+        }
+        setIncomingEdge(null);
+      } catch {}
+    }, 1000);
 
     const unlistenMove = win.onMoved(async () => {
       saveState({});
@@ -274,8 +285,7 @@ export function WidgetShell({
     });
     return () => {
       document.removeEventListener("mouseup", handleMouseUp);
-      unlistenNotify.then((fn) => fn());
-      unlistenClear.then((fn) => fn());
+      clearInterval(pollIncoming);
       unlistenMove.then((fn) => fn());
       unlistenResize.then((fn) => fn());
     };
@@ -336,7 +346,6 @@ export function WidgetShell({
       win.setPosition(new LogicalPosition(Math.max(0, w), Math.max(0, h))).catch(() => {});
       saveWindowState(pluginId, { x: undefined, y: undefined, height: undefined }).catch(() => {});
       await win.hide();
-      setPluginVisible(pluginId, false).catch(() => {});
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
 

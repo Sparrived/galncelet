@@ -396,12 +396,13 @@ pub fn snap_widget(
     });
 
     // Reposition widget to align with target edge
+    // offset = perpendicular coordinate (x for top/bottom, y for left/right)
     if let (Some(_my), Some(target)) = (get_widget_rect(&app, &label), get_widget_rect(&app, &target_label)) {
         let (x, y) = match edge {
-            SnapEdge::Bottom => (target.x, target.y + target.h),
-            SnapEdge::Top => (target.x, target.y - _my.h),
-            SnapEdge::Right => (target.x + target.w, target.y),
-            SnapEdge::Left => (target.x - _my.w, target.y),
+            SnapEdge::Top => (offset, target.y - _my.h),    // A above B, keep A's x
+            SnapEdge::Bottom => (offset, target.y + target.h), // A below B, keep A's x
+            SnapEdge::Left => (target.x - _my.w, offset),    // A left of B, keep A's y
+            SnapEdge::Right => (target.x + target.w, offset), // A right of B, keep A's y
         };
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.set_position(tauri::Position::Physical(
