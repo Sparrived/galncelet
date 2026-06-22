@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { AppSettings } from "../lib/types";
-import { setHideInFullscreen } from "../lib/api";
 import { getAllPlugins } from "../addons/registry";
 
 interface SettingsProps {
@@ -18,7 +17,6 @@ export function Settings({ settings, onSave, onClose, onSelectFolder }: Settings
   };
 
   const handleSave = () => {
-    setHideInFullscreen(draft.hideFullscreen).catch(() => {});
     onSave(draft);
     onClose();
   };
