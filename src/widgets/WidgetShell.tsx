@@ -143,7 +143,11 @@ export function WidgetShell({
   }, []);
 
   // Track window position and size changes + snap detection
+  // Drag-preview approach: show glow during drag, snap on drop
   useEffect(() => {
+    let dragTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingSnap: { target: string; edge: SnapEdge; offset: number } | null = null;
+
     const unlistenMove = win.onMoved(async () => {
       saveState({});
       try {
@@ -162,39 +166,10 @@ export function WidgetShell({
         }
         prevPosRef.current = { x: px, y: py };
 
-        // During cooldown after snap/unsnap, skip detection
-        if (snapCooldownRef.current) return;
+        // Skip detection during cooldown or for foreground-attached widgets
+        if (snapCooldownRef.current || attachEnabledRef.current) return;
 
-        // Skip snap for widgets attached to foreground windows
-        if (attachEnabledRef.current) return;
-
-        // If already snapped, only check unsnap (distance > threshold)
-        const curEdge = snapEdgeRef.current;
-        const curTarget = snapTargetRef.current;
-        if (curEdge && curTarget) {
-          const rects = await getAllWidgetRects();
-          const my = rects[winLabel];
-          const tgt = rects[curTarget];
-          if (my && tgt) {
-            let dist = 0;
-            switch (curEdge) {
-              case "Bottom": dist = Math.abs((my.y + my.h) - tgt.y); break;
-              case "Top": dist = Math.abs(my.y - (tgt.y + tgt.h)); break;
-              case "Right": dist = Math.abs((my.x + my.w) - tgt.x); break;
-              case "Left": dist = Math.abs(my.x - (tgt.x + tgt.w)); break;
-            }
-            if (dist > UNSNAP_THRESHOLD) {
-              unsnapWidget(winLabel).catch(() => {});
-              setSnapEdge(null);
-              snapTargetRef.current = "";
-              snapCooldownRef.current = true;
-              setTimeout(() => { snapCooldownRef.current = false; }, 200);
-            }
-          }
-          return; // Skip new-snap detection while snapped
-        }
-
-        // Not snapped — check proximity to other widgets for new snap
+        // Detect proximity and show preview
         const rects = await getAllWidgetRects();
         const my = rects[winLabel];
         if (!my) return;
@@ -206,7 +181,7 @@ export function WidgetShell({
 
         for (const [label, r] of Object.entries(rects)) {
           if (label === winLabel) continue;
-          if (r.attach_enabled) continue; // Skip foreground-attached widgets
+          if (r.attach_enabled) continue;
           const dBottom = Math.abs((my.y + my.h) - r.y);
           if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
             if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
@@ -226,17 +201,35 @@ export function WidgetShell({
         }
 
         if (bestEdge && bestDist < SNAP_THRESHOLD) {
-          snapWidget(winLabel, bestTarget, bestEdge, bestOffset).catch(() => {});
+          // Show preview glow (don't snap yet)
           setSnapEdge(bestEdge);
-          snapTargetRef.current = bestTarget;
-          snapCooldownRef.current = true;
-          setTimeout(() => { snapCooldownRef.current = false; }, 200);
+          pendingSnap = { target: bestTarget, edge: bestEdge, offset: bestOffset };
+        } else {
+          // Clear preview if no longer near
+          if (!snapEdgeRef.current) setSnapEdge(null);
+          pendingSnap = null;
         }
-        if (bestDist > UNSNAP_THRESHOLD) {
-          unsnapWidget(winLabel).catch(() => {});
-          setSnapEdge(null);
-          snapTargetRef.current = "";
-        }
+
+        // Debounce: if no move for 300ms, consider drag ended → commit snap
+        if (dragTimer) clearTimeout(dragTimer);
+        dragTimer = setTimeout(() => {
+          // Drag ended — check if we should unsnap
+          if (snapEdgeRef.current && snapTargetRef.current && !pendingSnap) {
+            // Was snapped but dragged away → unsnap
+            unsnapWidget(winLabel).catch(() => {});
+            setSnapEdge(null);
+            snapTargetRef.current = "";
+          }
+          // Commit pending snap
+          if (pendingSnap) {
+            snapWidget(winLabel, pendingSnap.target, pendingSnap.edge, pendingSnap.offset).catch(() => {});
+            setSnapEdge(pendingSnap.edge);
+            snapTargetRef.current = pendingSnap.target;
+            snapCooldownRef.current = true;
+            setTimeout(() => { snapCooldownRef.current = false; }, 200);
+            pendingSnap = null;
+          }
+        }, 300);
       } catch {}
     });
     const unlistenResize = win.onResized(() => {
