@@ -12,11 +12,12 @@ const STATUS_LABELS: Record<string, string> = {
   U: "冲",
 };
 
-function statusCodeClass(code: string): string {
-  if (code === "?") return "status-untracked";
-  if (code === "D") return "status-deleted";
-  if (code === "A") return "status-added";
-  return "status-modified";
+function statusCodeClass(code: string, staged: boolean): string {
+  const prefix = staged ? "staged-" : "";
+  if (code === "?") return `${prefix}status-untracked`;
+  if (code === "D") return `${prefix}status-deleted`;
+  if (code === "A") return `${prefix}status-added`;
+  return `${prefix}status-modified`;
 }
 
 interface GitTreeActions {
@@ -98,7 +99,7 @@ function TreeItem({ node, onSelect, selectedPath, depth, actions }: TreeItemProp
         className="tree-row"
         onClick={() => onSelect(node.path, node.staged ?? false, node.statusCode ?? "?")}
       >
-        <span className={`status-badge ${statusCodeClass(code)}`}>
+        <span className={`status-badge ${statusCodeClass(code, node.staged ?? false)}`}>
           {STATUS_LABELS[code] ?? code}
         </span>
         <span className="tree-filename">{node.name}</span>
