@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getPlugin } from "./addons/registry";
 import { WidgetShell } from "./widgets/WidgetShell";
 import { WidgetProvider } from "./lib/context";
+import { setPluginVisible } from "./lib/api";
 
 // Dynamic plugin loading: auto-discover all addons/*/index.tsx
 const pluginModules = import.meta.glob("./addons/*/index.tsx");
@@ -85,6 +86,7 @@ export default function App() {
           defaultAttachEnabled={plugin.defaultAttachEnabled}
           defaultAttachRemember={plugin.defaultAttachRemember}
           defaultWhitelist={plugin.defaultWhitelist}
+          onClose={() => setPluginVisible(plugin.id, false)}
         >
           <Component />
         </WidgetShell>

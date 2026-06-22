@@ -1,6 +1,6 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, setPluginVisible, saveWindowState } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
@@ -17,6 +17,7 @@ interface WidgetShellProps {
   defaultAttachEnabled?: boolean;
   defaultAttachRemember?: boolean;
   defaultWhitelist?: string[];
+  onClose?: () => void;
 }
 
 export function WidgetShell({
@@ -29,6 +30,7 @@ export function WidgetShell({
   defaultAttachEnabled = true,
   defaultAttachRemember = false,
   defaultWhitelist = [],
+  onClose,
 }: WidgetShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
@@ -174,10 +176,10 @@ export function WidgetShell({
 
   const handleClose = useCallback(async () => {
     try {
-      await setPluginVisible(pluginId, false);
+      if (onClose) await onClose();
       await win.hide();
     } catch {}
-  }, [win, pluginId]);
+  }, [win, onClose]);
 
   const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
 
