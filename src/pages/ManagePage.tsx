@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow, WebviewWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
@@ -46,7 +46,7 @@ export default function ManagePage() {
         plugin.defaultWhitelist ?? [],
       );
     } else {
-      const win = WebviewWindow.getByLabel(`widget-${plugin.id}`);
+      const win = await Window.getByLabel(`widget-${plugin.id}`);
       if (win) { try { await win.hide(); } catch {} }
     }
   };
