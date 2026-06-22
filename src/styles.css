@@ -1146,7 +1146,7 @@ html, body, #root {
 .branch-dropdown {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   min-width: 200px;
   max-width: 360px;
   max-height: 280px;
