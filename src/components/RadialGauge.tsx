@@ -13,8 +13,8 @@ export function RadialGauge({
   value,
   label,
   color = "var(--mcha-cyan)",
-  size = 80,
-  stroke = 6,
+  size = 56,
+  stroke = 4,
   sub,
 }: RadialGaugeProps) {
   const center = size / 2;
@@ -31,7 +31,6 @@ export function RadialGauge({
       viewBox={`0 0 ${size} ${size}`}
       style={{ "--rg-color": color } as React.CSSProperties}
     >
-      {/* Track ring */}
       <circle
         className="rg-track"
         cx={center}
@@ -40,7 +39,6 @@ export function RadialGauge({
         fill="none"
         strokeWidth={stroke}
       />
-      {/* Value arc — dashoffset animation stays perfectly circular */}
       <circle
         className="rg-fill"
         cx={center}
@@ -51,22 +49,20 @@ export function RadialGauge({
         strokeDasharray={circumference}
         strokeDashoffset={offset}
       />
-      {/* Center percentage */}
       <text
         className="rg-label"
         x={center}
-        y={sub ? center - 3 : center + 1}
+        y={sub ? center - 2 : center + 1}
         textAnchor="middle"
         dominantBaseline="central"
       >
         {label}
       </text>
-      {/* Sub label */}
       {sub && (
         <text
           className="rg-sub"
           x={center}
-          y={center + 11}
+          y={center + 8}
           textAnchor="middle"
           dominantBaseline="central"
         >

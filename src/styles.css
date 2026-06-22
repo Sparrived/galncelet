@@ -1972,55 +1972,29 @@ html, body, #root {
 /* ===== System Monitor — Mecha Style ===== */
 
 .sm-panel {
-  padding: 8px;
+  padding: 6px;
   overflow: visible;
   min-height: min-content;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
-/* ── Gauge Grid ── */
+/* ── Gauge Row ── */
 .sm-gauges {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
 }
 
 .sm-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 4px 0 3px;
+  padding: 3px 0 2px;
   background: var(--mcha-surface);
   border: 1px solid var(--mcha-border);
-  border-radius: 4px;
-}
-
-/* ── Gauge Detail Row ── */
-.sm-details {
-  display: flex;
-  gap: 6px;
-}
-
-.sm-detail {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.sm-detail-icon {
-  font-size: 7px;
-  color: var(--text-muted);
-  line-height: 1;
-}
-
-.sm-detail-val {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: -0.02em;
+  border-radius: 3px;
 }
 
 /* ── RadialGauge Component ── */
@@ -2048,7 +2022,7 @@ html, body, #root {
 
 .rg-label {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 700;
   fill: var(--text-primary);
   letter-spacing: -0.03em;
@@ -2056,7 +2030,7 @@ html, body, #root {
 
 .rg-sub {
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 600;
   fill: var(--text-muted);
   letter-spacing: 0.06em;
@@ -2066,7 +2040,7 @@ html, body, #root {
 .sm-net {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .sm-net-head {
