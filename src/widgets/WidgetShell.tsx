@@ -50,9 +50,21 @@ export function WidgetShell({
   const prevPosRef = useRef<{ x: number; y: number } | null>(null);
   const snapEdgeRef = useRef<SnapEdge | null>(null);
   const snapTargetRef = useRef<string>("");
+  const snapCooldownRef = useRef(false);
   snapEdgeRef.current = snapEdge;
 
   const OPPOSITE: Record<SnapEdge, SnapEdge> = { Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" };
+
+  // Body drag: make blank areas draggable
+  const handleBodyMouseDown = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    // Don't drag if clicking on interactive elements
+    if (target.closest("button, input, select, textarea, a, [data-no-drag]")) return;
+    // Don't drag if inside header (already handled by -webkit-app-region)
+    if (target.closest(".widget-header")) return;
+    e.preventDefault();
+    win.startDragging().catch(() => {});
+  }, [win]);
 
   // Refs to avoid stale closures in saveState
   const attachEnabledRef = useRef(attachEnabled);
@@ -148,7 +160,36 @@ export function WidgetShell({
         }
         prevPosRef.current = { x: px, y: py };
 
-        // Check proximity to other widgets
+        // During cooldown after snap/unsnap, skip detection
+        if (snapCooldownRef.current) return;
+
+        // If already snapped, only check unsnap (distance > threshold)
+        const curEdge = snapEdgeRef.current;
+        const curTarget = snapTargetRef.current;
+        if (curEdge && curTarget) {
+          const rects = await getAllWidgetRects();
+          const my = rects[winLabel];
+          const tgt = rects[curTarget];
+          if (my && tgt) {
+            let dist = 0;
+            switch (curEdge) {
+              case "Bottom": dist = Math.abs((my.y + my.h) - tgt.y); break;
+              case "Top": dist = Math.abs(my.y - (tgt.y + tgt.h)); break;
+              case "Right": dist = Math.abs((my.x + my.w) - tgt.x); break;
+              case "Left": dist = Math.abs(my.x - (tgt.x + tgt.w)); break;
+            }
+            if (dist > UNSNAP_THRESHOLD) {
+              unsnapWidget(winLabel).catch(() => {});
+              setSnapEdge(null);
+              snapTargetRef.current = "";
+              snapCooldownRef.current = true;
+              setTimeout(() => { snapCooldownRef.current = false; }, 200);
+            }
+          }
+          return; // Skip new-snap detection while snapped
+        }
+
+        // Not snapped — check proximity to other widgets for new snap
         const rects = await getAllWidgetRects();
         const my = rects[winLabel];
         if (!my) return;
@@ -158,53 +199,33 @@ export function WidgetShell({
         let bestTarget = "";
         let bestOffset = 0;
 
-        const curEdge = snapEdgeRef.current;
-        const curTarget = snapTargetRef.current;
-        const skipEdge = curEdge ? OPPOSITE[curEdge] : null;
-
         for (const [label, r] of Object.entries(rects)) {
           if (label === winLabel) continue;
-          // Skip the opposite edge of the current snap target to prevent oscillation
-          const isSameTarget = label === curTarget;
-          // Bottom edge of my widget near top edge of target
-          if (!(isSameTarget && skipEdge === "Bottom")) {
-            const dBottom = Math.abs((my.y + my.h) - r.y);
-            if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-              if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
-            }
+          const dBottom = Math.abs((my.y + my.h) - r.y);
+          if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
           }
-          // Top edge near bottom edge of target
-          if (!(isSameTarget && skipEdge === "Top")) {
-            const dTop = Math.abs(my.y - (r.y + r.h));
-            if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-              if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
-            }
+          const dTop = Math.abs(my.y - (r.y + r.h));
+          if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
           }
-          // Right edge near left edge of target
-          if (!(isSameTarget && skipEdge === "Right")) {
-            const dRight = Math.abs((my.x + my.w) - r.x);
-            if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-              if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
-            }
+          const dRight = Math.abs((my.x + my.w) - r.x);
+          if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
           }
-          // Left edge near right edge of target
-          if (!(isSameTarget && skipEdge === "Left")) {
-            const dLeft = Math.abs(my.x - (r.x + r.w));
-            if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-              if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
-            }
+          const dLeft = Math.abs(my.x - (r.x + r.w));
+          if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
           }
         }
 
         if (bestEdge && bestDist < SNAP_THRESHOLD) {
-          // Snap! (only if target/edge changed)
-          if (snapEdgeRef.current !== bestEdge || snapTargetRef.current !== bestTarget) {
-            snapWidget(winLabel, bestTarget, bestEdge, bestOffset).catch(() => {});
-            setSnapEdge(bestEdge);
-            snapTargetRef.current = bestTarget;
-          }
-        } else if (snapEdgeRef.current) {
-          // Check if still close enough to stay snapped
+          snapWidget(winLabel, bestTarget, bestEdge, bestOffset).catch(() => {});
+          setSnapEdge(bestEdge);
+          snapTargetRef.current = bestTarget;
+          snapCooldownRef.current = true;
+          setTimeout(() => { snapCooldownRef.current = false; }, 200);
+        }
           if (bestDist > UNSNAP_THRESHOLD) {
             unsnapWidget(winLabel).catch(() => {});
             setSnapEdge(null);
@@ -294,7 +315,7 @@ export function WidgetShell({
             )}
           </div>
         </header>
-        <div className="widget-body" style={collapsed ? { display: "none" } : undefined}>{children}</div>
+        <div className="widget-body" style={collapsed ? { display: "none" } : undefined} onMouseDown={handleBodyMouseDown}>{children}</div>
       </div>
     </WidgetProvider>
   );
