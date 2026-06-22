@@ -85,6 +85,10 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke<void>("save_settings", { settings });
 }
 
+export async function setPluginVisible(pluginId: string, visible: boolean): Promise<void> {
+  return invoke<void>("set_plugin_visible", { pluginId, visible });
+}
+
 export async function updateCardWidth(width: number): Promise<void> {
   return invoke<void>("update_card_width", { width });
 }

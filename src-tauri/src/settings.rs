@@ -99,6 +99,18 @@ pub fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(),
     Ok(())
 }
 
+/// Tauri command: set plugin visibility in settings (used by close button).
+#[tauri::command]
+pub fn set_plugin_visible(
+    app: tauri::AppHandle,
+    plugin_id: String,
+    visible: bool,
+) -> Result<(), String> {
+    let mut s = load_settings(app.clone())?;
+    s.panel_visibility.insert(plugin_id, visible);
+    save_settings(app, s)
+}
+
 /// Tauri command: update a single window's persisted state.
 /// Reads the current settings, merges the window state, and writes back.
 #[tauri::command]

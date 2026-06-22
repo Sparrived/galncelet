@@ -507,6 +507,7 @@ fn main() {
             settings::load_settings,
             settings::save_settings,
             settings::save_window_state,
+            settings::set_plugin_visible,
             update_card_width,
             set_body_collapsed,
             set_attach_enabled,
