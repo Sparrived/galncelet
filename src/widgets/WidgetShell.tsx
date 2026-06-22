@@ -53,8 +53,6 @@ export function WidgetShell({
   const snapCooldownRef = useRef(false);
   snapEdgeRef.current = snapEdge;
 
-  const OPPOSITE: Record<SnapEdge, SnapEdge> = { Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" };
-
   // Body drag: make blank areas draggable
   const handleBodyMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
