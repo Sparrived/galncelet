@@ -104,14 +104,14 @@ html, body, #root {
   overflow: visible;
 }
 
-/* ── Widget Snap Indicators ── */
+/* ── Widget Snap Indicators (visible inside window) ── */
 .widget-snapped {
-  transition: box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.snap-edge-bottom { box-shadow: 0 2px 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
-.snap-edge-top    { box-shadow: 0 -2px 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
-.snap-edge-right  { box-shadow: 2px 0 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
-.snap-edge-left   { box-shadow: -2px 0 0 0 var(--mcha-cyan), 0 0 12px 2px rgba(34, 211, 238, 0.3); }
+.snap-edge-bottom { border-bottom: 2px solid var(--mcha-cyan); box-shadow: inset 0 -4px 12px -4px rgba(34, 211, 238, 0.5); }
+.snap-edge-top    { border-top: 2px solid var(--mcha-cyan); box-shadow: inset 0 4px 12px -4px rgba(34, 211, 238, 0.5); }
+.snap-edge-right  { border-right: 2px solid var(--mcha-cyan); box-shadow: inset -4px 0 12px -4px rgba(34, 211, 238, 0.5); }
+.snap-edge-left   { border-left: 2px solid var(--mcha-cyan); box-shadow: inset 4px 0 12px -4px rgba(34, 211, 238, 0.5); }
 
 /* ===== Header ===== */
 .header {
