@@ -1,6 +1,6 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveSettings, saveWindowState } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
@@ -173,8 +173,13 @@ export function WidgetShell({
   }, [attachRemember, winLabel, saveState]);
 
   const handleClose = useCallback(async () => {
-    try { await win.hide(); } catch {}
-  }, [win]);
+    try {
+      const s = await loadSettings();
+      s.panelVisibility[pluginId] = false;
+      await saveSettings(s);
+      await win.hide();
+    } catch {}
+  }, [win, pluginId]);
 
   const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
 

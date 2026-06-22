@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, WebviewWindow } from "@tauri-apps/api/window";
 import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
@@ -32,10 +32,23 @@ export default function ManagePage() {
     if (patch.cardWidth) updateCardWidth(patch.cardWidth);
   };
 
-  const togglePlugin = async (id: string) => {
+  const togglePlugin = async (plugin: PluginDef) => {
     const vis = { ...settings.panelVisibility };
-    vis[id] = vis[id] === false;
+    const enabling = vis[plugin.id] === false;
+    vis[plugin.id] = enabling;
     await updateSettings({ panelVisibility: vis });
+    if (enabling) {
+      await createPluginWindow(
+        plugin.id, plugin.title,
+        plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
+        plugin.defaultAttachEnabled !== false,
+        plugin.defaultAttachRemember === true,
+        plugin.defaultWhitelist ?? [],
+      );
+    } else {
+      const win = WebviewWindow.getByLabel(`widget-${plugin.id}`);
+      if (win) { try { await win.hide(); } catch {} }
+    }
   };
 
   const openPlugin = async (plugin: PluginDef) => {
@@ -223,7 +236,7 @@ export default function ManagePage() {
                 <div className="manage-item-actions">
                   <button
                     className={`toggle ${enabled ? "toggle-on" : ""}`}
-                    onClick={() => togglePlugin(p.id)}
+                    onClick={() => togglePlugin(p)}
                     title={enabled ? "禁用" : "启用"}
                   >
                     <span className="toggle-knob" />
