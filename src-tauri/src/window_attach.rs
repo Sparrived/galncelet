@@ -13,9 +13,10 @@ use windows::Win32::Graphics::Gdi::{
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 #[cfg(target_os = "windows")]
+use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindowVisible, MSG, TranslateMessage, GetMessageW,
+    DispatchMessageW, EnumWindows, GetForegroundWindow, GetWindowRect,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MSG, TranslateMessage, GetMessageW,
     EVENT_OBJECT_LOCATIONCHANGE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 #[cfg(target_os = "windows")]
@@ -131,12 +132,16 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
     };
     if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() { return; }
 
-    let card_x = if target_rect.right + cw <= mi.rcWork.right {
+    // cw is logical; target_rect is physical. Convert cw to physical pixels.
+    let dpi = unsafe { GetDpiForSystem() }.max(96);
+    let cw_phys = (cw as f32 * dpi as f32 / 96.0).round() as i32;
+
+    let card_x = if target_rect.right + cw_phys <= mi.rcWork.right {
         target_rect.right
-    } else if target_rect.left - cw >= mi.rcWork.left {
-        target_rect.left - cw
+    } else if target_rect.left - cw_phys >= mi.rcWork.left {
+        target_rect.left - cw_phys
     } else {
-        mi.rcWork.right - cw
+        mi.rcWork.right - cw_phys
     };
     let card_y = target_rect.top.max(mi.rcWork.top);
 
