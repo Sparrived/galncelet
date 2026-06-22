@@ -1,8 +1,44 @@
-use serde::Serialize;
-use sysinfo::{Components, System};
+use serde::{Serialize, Deserialize};
+use sysinfo::System;
 use std::sync::Mutex;
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
+
+// ── WMI CPU 温度查询 ──
+
+#[derive(Deserialize)]
+#[serde(rename = "MSAcpi_ThermalZoneTemperature")]
+struct ThermalZone {
+    #[serde(rename = "CurrentTemperature")]
+    current_temperature: u32,
+}
+
+/// 通过 WMI 查询 CPU 温度（MSAcpi_ThermalZoneTemperature，单位：十分之一开尔文）
+/// 需要管理员权限才能读取，普通权限返回 None
+fn wmi_cpu_temp() -> Option<f32> {
+    let com = unsafe { wmi::COMLibrary::assume_initialized() };
+    let wmi = wmi::WMIConnection::with_namespace_path("root\\WMI", com).ok()?;
+    let zones: Vec<ThermalZone> = wmi.query().ok()?;
+    let temp = zones.first()?.current_temperature;
+    // 十分之一开尔文 → 摄氏度
+    Some(temp as f32 / 10.0 - 273.15)
+}
+
+/// 回退：通过 sysinfo Components 查询 CPU 温度
+fn sysinfo_cpu_temp() -> Option<f32> {
+    sysinfo::Components::new_with_refreshed_list()
+        .iter()
+        .find(|c| {
+            let l = c.label().to_lowercase();
+            l.contains("cpu") || l.contains("core") || l.contains("package")
+        })
+        .map(|c| c.temperature())
+}
+
+/// 尝试多种方式获取 CPU 温度
+fn get_cpu_temperature() -> Option<f32> {
+    wmi_cpu_temp().or_else(sysinfo_cpu_temp)
+}
 
 /// 系统监控状态
 pub struct SystemMonitorState {
@@ -138,10 +174,7 @@ impl SystemMonitorState {
         let cpu_usage = sys.global_cpu_info().cpu_usage();
         let cpu_cores = sys.cpus().len();
         let cpu_frequency = sys.cpus().first().map(|c| c.frequency()).unwrap_or(0);
-        let cpu_temperature = Components::new_with_refreshed_list()
-            .iter()
-            .find(|c| c.label().to_lowercase().contains("cpu") || c.label().to_lowercase().contains("core"))
-            .map(|c| c.temperature());
+        let cpu_temperature = get_cpu_temperature();
 
         let cpu = CpuInfo {
             usage: cpu_usage,
