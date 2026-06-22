@@ -168,7 +168,8 @@ export default function ManagePage() {
         </div>
       </header>
 
-      <div className="manage-content"><div className="manage-list">
+      <div className="manage-content">
+        <div className="manage-list">
           {plugins.map((p) => {
             const enabled = settings.panelVisibility[p.id] !== false;
             return (
@@ -182,26 +183,26 @@ export default function ManagePage() {
                 </div>
                 <div className="manage-item-actions">
                   <button
+                    className="btn-action btn-open-plugin"
+                    onClick={() => setActivePlugin(p.id)}
+                  >
+                    设置
+                  </button>
+                  <button
+                    className="btn-action btn-open-plugin"
+                    onClick={() => openPlugin(p)}
+                    disabled={!enabled}
+                    style={!enabled ? { opacity: 0.3, pointerEvents: "none" } : undefined}
+                  >
+                    打开
+                  </button>
+                  <button
                     className={`toggle ${enabled ? "toggle-on" : ""}`}
                     onClick={() => togglePlugin(p)}
                     title={enabled ? "禁用" : "启用"}
                   >
                     <span className="toggle-knob" />
                   </button>
-                  <button
-                    className="btn-action btn-open-plugin"
-                    onClick={() => setActivePlugin(p.id)}
-                  >
-                    设置
-                  </button>
-                  {enabled && (
-                    <button
-                      className="btn-action btn-open-plugin"
-                      onClick={() => openPlugin(p)}
-                    >
-                      打开
-                    </button>
-                  )}
                 </div>
               </div>
             );
@@ -217,4 +218,3 @@ export default function ManagePage() {
 function getPluginById(id: string): PluginDef | undefined {
   return getAllPlugins().find((p) => p.id === id);
 }
-

@@ -1,6 +1,7 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
+import { emit } from "@tauri-apps/api/event";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, setPluginVisible, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider, type ContextMenuItem } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
@@ -346,6 +347,7 @@ export function WidgetShell({
       win.setPosition(new LogicalPosition(Math.max(0, w), Math.max(0, h))).catch(() => {});
       saveWindowState(pluginId, { x: undefined, y: undefined, height: undefined }).catch(() => {});
       await win.hide();
+      setPluginVisible(pluginId, false).catch(() => {});
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
 
