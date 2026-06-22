@@ -230,11 +230,10 @@ export function WidgetShell({
           snapCooldownRef.current = true;
           setTimeout(() => { snapCooldownRef.current = false; }, 200);
         }
-          if (bestDist > UNSNAP_THRESHOLD) {
-            unsnapWidget(winLabel).catch(() => {});
-            setSnapEdge(null);
-            snapTargetRef.current = "";
-          }
+        if (bestDist > UNSNAP_THRESHOLD) {
+          unsnapWidget(winLabel).catch(() => {});
+          setSnapEdge(null);
+          snapTargetRef.current = "";
         }
       } catch {}
     });
@@ -296,7 +295,7 @@ export function WidgetShell({
       unsnapWidget(winLabel).catch(() => {});
       setSnapEdge(null);
       snapTargetRef.current = "";
-      saveWindowState(pluginId, { x: null, y: null, height: null }).catch(() => {});
+      saveWindowState(pluginId, { x: undefined, y: undefined, height: undefined }).catch(() => {});
       await win.hide();
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
