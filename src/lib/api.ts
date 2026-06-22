@@ -141,6 +141,10 @@ export async function setAttachRemember(windowLabel: string, remember: boolean):
   return invoke<void>("set_attach_remember", { windowLabel, remember });
 }
 
+export async function setHideInFullscreen(enabled: boolean): Promise<void> {
+  return invoke<void>("set_hide_in_fullscreen", { enabled });
+}
+
 export interface WindowEntry {
   title: string;
   process: string;

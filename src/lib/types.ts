@@ -87,6 +87,8 @@ export interface AppSettings {
   panelVisibility: Record<string, boolean>;
   /** Per-window persisted state */
   windowStates: Record<string, WindowState>;
+  /** Hide all widgets when the focused window is fullscreen */
+  hideFullscreen: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -98,6 +100,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   savedRepos: [],
   panelVisibility: { git: true, amkr: true },
   windowStates: {},
+  hideFullscreen: true,
 };
 
 /** AMKR per-model or total usage stats */

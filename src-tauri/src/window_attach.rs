@@ -33,6 +33,8 @@ pub struct AttachState {
     pub attach_remember: Arc<Mutex<HashMap<String, bool>>>,
     /// Current browser URL (shared with frontend)
     pub current_url: Arc<Mutex<String>>,
+    /// Hide all widgets when the focused window is fullscreen
+    pub hide_in_fullscreen: Arc<Mutex<bool>>,
 }
 
 impl AttachState {
@@ -45,6 +47,7 @@ impl AttachState {
             attach_whitelist: Arc::new(Mutex::new(HashMap::new())),
             attach_remember: Arc::new(Mutex::new(HashMap::new())),
             current_url: Arc::new(Mutex::new(String::new())),
+            hide_in_fullscreen: Arc::new(Mutex::new(true)),
         }
     }
 }
@@ -75,6 +78,27 @@ fn is_own_window(hwnd: HWND) -> bool {
     let mut pid: u32 = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
     pid == unsafe { GetCurrentProcessId() }
+}
+
+
+/// Check if a window is fullscreen (covers the entire monitor).
+#[cfg(target_os = "windows")]
+fn is_fullscreen(hwnd: HWND) -> bool {
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+        return false;
+    }
+    let hmonitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() {
+        return false;
+    }
+    let mon = mi.rcMonitor;
+    rect.left <= mon.left && rect.top <= mon.top
+        && rect.right >= mon.right && rect.bottom >= mon.bottom
 }
 
 /// Reposition all enabled, non-collapsed widgets next to the given window.
@@ -299,7 +323,18 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
             if dirty || fg_changed {
                 last_fg = fg.0 as isize;
                 if !is_own_window(fg) {
-                    reposition_widgets(&app_handle, fg, &state);
+                    let hif = *state.hide_in_fullscreen.lock().unwrap();
+                    if hif && is_fullscreen(fg) {
+                        // Hide all widget windows when foreground is fullscreen
+                        let enabled = state.attach_enabled.lock().unwrap().clone();
+                        for label in enabled.keys() {
+                            if let Some(win) = app_handle.get_webview_window(label) {
+                                let _ = win.hide();
+                            }
+                        }
+                    } else {
+                        reposition_widgets(&app_handle, fg, &state);
+                    }
                 }
             }
 

@@ -173,6 +173,12 @@ fn set_attach_remember(state: tauri::State<'_, Arc<AttachState>>, window_label: 
 }
 
 
+
+/// Tauri command: set whether to hide all widgets when the focused window is fullscreen.
+#[tauri::command]
+fn set_hide_in_fullscreen(state: tauri::State<'_, Arc<AttachState>>, enabled: bool) {
+    *state.hide_in_fullscreen.lock().unwrap() = enabled;
+}
 /// Tauri command: get the current browser URL from the attach loop.
 #[tauri::command]
 fn get_browser_url(state: tauri::State<'_, Arc<AttachState>>) -> String {

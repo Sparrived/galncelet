@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AppSettings } from "../lib/types";
+import { setHideInFullscreen } from "../lib/api";
 import { getAllPlugins } from "../addons/registry";
 
 interface SettingsProps {
@@ -17,6 +18,7 @@ export function Settings({ settings, onSave, onClose, onSelectFolder }: Settings
   };
 
   const handleSave = () => {
+    setHideInFullscreen(draft.hideFullscreen).catch(() => {});
     onSave(draft);
     onClose();
   };
@@ -104,6 +106,34 @@ export function Settings({ settings, onSave, onClose, onSelectFolder }: Settings
             </div>
           </div>
 
+
+          {/* Hide widgets in fullscreen */}
+          <div className="settings-group">
+            <div className="settings-row settings-row-between">
+              <label className="settings-label">全屏时隐藏挂件</label>
+              <button
+                className={`toggle ${draft.hideFullscreen ? "toggle-on" : ""}`}
+                onClick={() => update("hideFullscreen", !draft.hideFullscreen)}
+                type="button"
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+          </div>
+
+          {/* Hide widgets in fullscreen */}
+          <div className="settings-group">
+            <div className="settings-row settings-row-between">
+              <label className="settings-label">全屏时隐藏挂件</label>
+              <button
+                className={`toggle ${draft.hideFullscreen ? "toggle-on" : ""}`}
+                onClick={() => update("hideFullscreen", !draft.hideFullscreen)}
+                type="button"
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+          </div>
           {/* Pull --rebase */}
           <div className="settings-group">
             <div className="settings-row settings-row-between">
