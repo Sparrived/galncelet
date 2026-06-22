@@ -289,11 +289,15 @@ export function WidgetShell({
   const handleClose = useCallback(async () => {
     try {
       if (onClose) await onClose();
-      // Remove snap relationships and reset saved position
+      // Remove snap relationships
       unsnapWidget(winLabel).catch(() => {});
       setSnapEdge(null);
       snapTargetRef.current = "";
-      saveWindowState(pluginId, { x: undefined, y: undefined, height: undefined }).catch(() => {});
+      // Move window to screen center, then clear saved position
+      const w = Math.round((window.screen.width - 360) / 2);
+      const h = Math.round((window.screen.height - 400) / 2);
+      win.setPosition(new LogicalPosition(Math.max(0, w), Math.max(0, h))).catch(() => {});
+      saveWindowState(pluginId, { x: null, y: null, height: null }).catch(() => {});
       await win.hide();
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
