@@ -3,7 +3,7 @@ import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/
 import { emit, listen } from "@tauri-apps/api/event";
 import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, getSnapInfo, type SnapEdge } from "../lib/api";
 import type { WindowState } from "../lib/types";
-import { HEADER_H, WidgetProvider } from "./WidgetContext";
+import { HEADER_H, WidgetProvider, type ContextMenuItem } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
 
 const SNAP_THRESHOLD = 20;
@@ -189,7 +189,7 @@ export function WidgetShell({
     });
 
     // On mount, check if we already have an incoming snap
-    getSnapInfo(winLabel).then((info) => {
+    getSnapInfo(winLabel).then(() => {
       // We don't have a "reverse" query, so we check all widgets later
     }).catch(() => {});
 
@@ -214,7 +214,7 @@ export function WidgetShell({
         // Skip detection during cooldown or for foreground-attached widgets
         if (snapCooldownRef.current || attachEnabledRef.current) return;
 
-        const curTarget = snapTargetRef.current;
+        
 
         // Detect proximity and show preview glow
         const rects = await getAllWidgetRects();
@@ -229,21 +229,25 @@ export function WidgetShell({
         for (const [label, r] of Object.entries(rects)) {
           if (label === winLabel) continue;
           if (r.attach_enabled) continue;
-          const dBottom = Math.abs((my.y + my.h) - r.y);
-          if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
+          // My bottom near target's top → I'm above → snap to target's Top (A的顶边贴B的底边)
+          const dAbove = Math.abs((my.y + my.h) - r.y);
+          if (dAbove < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dAbove < bestDist) { bestDist = dAbove; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
           }
-          const dTop = Math.abs(my.y - (r.y + r.h));
-          if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
+          // My top near target's bottom → I'm below → snap to target's Bottom
+          const dBelow = Math.abs(my.y - (r.y + r.h));
+          if (dBelow < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+            if (dBelow < bestDist) { bestDist = dBelow; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
           }
-          const dRight = Math.abs((my.x + my.w) - r.x);
-          if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
+          // My right near target's left → I'm to the left → snap to target's Left
+          const dLeftOf = Math.abs((my.x + my.w) - r.x);
+          if (dLeftOf < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dLeftOf < bestDist) { bestDist = dLeftOf; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
           }
-          const dLeft = Math.abs(my.x - (r.x + r.w));
-          if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
+          // My left near target's right → I'm to the right → snap to target's Right
+          const dRightOf = Math.abs(my.x - (r.x + r.w));
+          if (dRightOf < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+            if (dRightOf < bestDist) { bestDist = dRightOf; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
           }
         }
 
@@ -332,7 +336,40 @@ export function WidgetShell({
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
 
-  const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
+  
+  // ─── Context Menu ───
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [pluginMenuItems, setPluginMenuItems] = useState<ContextMenuItem[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const registerContextMenuItems = useCallback((items: ContextMenuItem[]) => {
+    setPluginMenuItems(items);
+  }, []);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setMenuPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, []);
+
+  const closeMenu = useCallback(() => setMenuPos(null), []);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuPos) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) closeMenu();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuPos, closeMenu]);
+
+  const defaultMenuItems: ContextMenuItem[] = [
+    { label: "关闭挂件", icon: "✕", onClick: handleClose, danger: true },
+  ];
+  const allMenuItems = [...pluginMenuItems, ...defaultMenuItems];
+
+  const contextValue = useMemo(() => ({ collapsed, contextMenuItems: pluginMenuItems, registerContextMenuItems }), [collapsed, pluginMenuItems, registerContextMenuItems]);
 
   return (
     <WidgetProvider value={contextValue}>
@@ -355,7 +392,23 @@ export function WidgetShell({
             )}
           </div>
         </header>
-        <div className="widget-body" style={collapsed ? { display: "none" } : undefined} onMouseDown={handleBodyMouseDown}>{children}</div>
+        <div className="widget-body" style={collapsed ? { display: "none" } : undefined} onMouseDown={handleBodyMouseDown} onContextMenu={handleContextMenu}>
+          {children}
+          {menuPos && (
+            <div className="ctx-menu" ref={menuRef} style={{ left: menuPos.x, top: menuPos.y }}>
+              {allMenuItems.map((item, i) => (
+                <button
+                  key={i}
+                  className={`ctx-menu-item${item.danger ? " ctx-menu-danger" : ""}`}
+                  onClick={() => { item.onClick(); closeMenu(); }}
+                >
+                  {item.icon && <span className="ctx-menu-icon">{item.icon}</span>}
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </WidgetProvider>
   );

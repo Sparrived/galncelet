@@ -4,7 +4,7 @@ import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
   setAttachWhitelist, createPluginWindow, listVisibleWindows,
-  selectFolder, getStatus, updateCardWidth,
+  updateCardWidth,
   type WindowEntry,
   openSettingsWindow,
 } from "../lib/api";
@@ -74,11 +74,6 @@ export default function ManagePage() {
     setSettings(newSettings);
   };
 
-  const handleSelectFolder = async () => {
-    const path = await selectFolder();
-    if (path) { try { await getStatus(path); } catch {} }
-  };
-
   const scanWindows = async () => {
     setScanningWindows(true);
     try {
@@ -108,55 +103,6 @@ export default function ManagePage() {
         </header>
 
         <div className="manage-content settings-page-body">
-          {/* Git settings */}
-          {activePlugin === "git" && (
-            <>
-              <div className="settings-group">
-                <button className="btn-action btn-select-folder" onClick={handleSelectFolder}>
-                  &#128193; 选择仓库
-                </button>
-              </div>
-              <div className="settings-group">
-                <label className="settings-label">自动刷新间隔</label>
-                <div className="settings-row">
-                  <input className="settings-slider" type="range" min={500} max={10000} step={500}
-                    value={settings.refreshIntervalMs}
-                    onChange={(e) => updateSettings({ refreshIntervalMs: Number(e.target.value) })}
-                  />
-                  <span className="settings-value">{settings.refreshIntervalMs}ms</span>
-                </div>
-              </div>
-              <div className="settings-group">
-                <label className="settings-label">提交历史最大条数</label>
-                <div className="settings-row">
-                  <input className="settings-number" type="number" min={10} max={500}
-                    value={settings.logMaxCount}
-                    onChange={(e) => updateSettings({ logMaxCount: Math.max(10, Math.min(500, Number(e.target.value) || 10)) })}
-                  />
-                </div>
-              </div>
-              <div className="settings-group">
-                <div className="settings-row settings-row-between">
-                  <label className="settings-label">Pull 使用 Rebase</label>
-                  <button className={`toggle ${settings.pullRebase ? "toggle-on" : ""}`}
-                    onClick={() => updateSettings({ pullRebase: !settings.pullRebase })}>
-                    <span className="toggle-knob" />
-                  </button>
-                </div>
-              </div>
-              <div className="settings-group">
-                <label className="settings-label">卡片宽度</label>
-                <div className="settings-row">
-                  <input className="settings-slider" type="range" min={300} max={600} step={10}
-                    value={settings.cardWidth}
-                    onChange={(e) => updateSettings({ cardWidth: Number(e.target.value) })}
-                  />
-                  <span className="settings-value">{settings.cardWidth}px</span>
-                </div>
-              </div>
-            </>
-          )}
-
           {/* Whitelist editor */}
           {plugin?.showAttachButton !== false && (
             <div className="settings-group">

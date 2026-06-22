@@ -349,7 +349,7 @@ fn exec_git_command(repo_root: String, command: String) -> Result<GitCommandResu
 #[tauri::command]
 async fn select_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let folder = app.dialog().file().set_title("选择 Git 仓库目录").blocking_pick_folder();
+    let folder = app.dialog().file().set_title("选择文件夹").blocking_pick_folder();
     Ok(folder.map(|p| p.to_string()))
 }
 
@@ -447,9 +447,11 @@ fn main() {
             clipboard_history::start_monitor(clipboard_state);
 
             // Create widget windows from plugin manifests (zero hardcoded knowledge)
-            let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
+            let manifests = plugins::load_manifests();
+            let mut app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
+            app_settings.ensure_plugin_visibility(&manifests);
             println!("[setup] creating widget windows...");
-            for manifest in plugins::load_manifests() {
+            for manifest in &manifests {
                 println!("[setup] loading plugin: {} (visible={})", manifest.id, app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true));
                 if !app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true) {
                     continue;
@@ -523,8 +525,8 @@ fn main() {
             // Browser extension setup (copy to app data, write registry)
             browser_ext::setup(&handle);
 
-            // System tray
-            tray::setup(app).expect("failed to setup system tray");
+            // System tray (dynamically built from plugin manifests)
+            tray::setup(app, &manifests).expect("failed to setup system tray");
 
             // Window attachment loop
             let app_handle = app.handle().clone();

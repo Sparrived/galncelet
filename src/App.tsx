@@ -75,10 +75,7 @@ export default function App() {
 
   const Component = plugin.component;
 
-  // Dynamic title: show repo name for Git plugin, plugin title for others
-  const widgetTitle = plugin.id === "git"
-    ? (repoRoot ? repoRoot.split(/[\\/]/).pop() : plugin.title)
-    : plugin.title;
+  const widgetTitle = plugin.title;
 
   return (
     <WidgetProvider value={contextValue}>

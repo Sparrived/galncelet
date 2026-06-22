@@ -46,10 +46,6 @@ pub struct AppSettings {
 
 impl Default for AppSettings {
     fn default() -> Self {
-        let mut panel_visibility = HashMap::new();
-        panel_visibility.insert("git".to_string(), true);
-        panel_visibility.insert("amkr".to_string(), true);
-        panel_visibility.insert("page-notes".to_string(), true);
         Self {
             refresh_interval_ms: 2000,
             card_width: 360,
@@ -57,8 +53,18 @@ impl Default for AppSettings {
             always_on_top: true,
             pull_rebase: true,
             saved_repos: Vec::new(),
-            panel_visibility,
+            panel_visibility: HashMap::new(),
             window_states: HashMap::new(),
+        }
+    }
+}
+
+impl AppSettings {
+    /// Ensure all known plugins have a visibility entry (defaulting to visible).
+    /// This fills in missing plugin IDs from manifests without overwriting existing values.
+    pub fn ensure_plugin_visibility(&mut self, manifests: &[crate::plugins::PluginManifest]) {
+        for m in manifests {
+            self.panel_visibility.entry(m.id.clone()).or_insert(true);
         }
     }
 }
