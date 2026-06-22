@@ -49,7 +49,10 @@ export function WidgetShell({
   const collapsedRef = useRef(false);
   const prevPosRef = useRef<{ x: number; y: number } | null>(null);
   const snapEdgeRef = useRef<SnapEdge | null>(null);
+  const snapTargetRef = useRef<string>("");
   snapEdgeRef.current = snapEdge;
+
+  const OPPOSITE: Record<SnapEdge, SnapEdge> = { Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" };
 
   // Refs to avoid stale closures in saveState
   const attachEnabledRef = useRef(attachEnabled);
@@ -155,41 +158,57 @@ export function WidgetShell({
         let bestTarget = "";
         let bestOffset = 0;
 
+        const curEdge = snapEdgeRef.current;
+        const curTarget = snapTargetRef.current;
+        const skipEdge = curEdge ? OPPOSITE[curEdge] : null;
+
         for (const [label, r] of Object.entries(rects)) {
           if (label === winLabel) continue;
+          // Skip the opposite edge of the current snap target to prevent oscillation
+          const isSameTarget = label === curTarget;
           // Bottom edge of my widget near top edge of target
-          const dBottom = Math.abs((my.y + my.h) - r.y);
-          if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
+          if (!(isSameTarget && skipEdge === "Bottom")) {
+            const dBottom = Math.abs((my.y + my.h) - r.y);
+            if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+              if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
+            }
           }
           // Top edge near bottom edge of target
-          const dTop = Math.abs(my.y - (r.y + r.h));
-          if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
+          if (!(isSameTarget && skipEdge === "Top")) {
+            const dTop = Math.abs(my.y - (r.y + r.h));
+            if (dTop < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
+              if (dTop < bestDist) { bestDist = dTop; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
+            }
           }
           // Right edge near left edge of target
-          const dRight = Math.abs((my.x + my.w) - r.x);
-          if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
+          if (!(isSameTarget && skipEdge === "Right")) {
+            const dRight = Math.abs((my.x + my.w) - r.x);
+            if (dRight < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+              if (dRight < bestDist) { bestDist = dRight; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
+            }
           }
           // Left edge near right edge of target
-          const dLeft = Math.abs(my.x - (r.x + r.w));
-          if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
+          if (!(isSameTarget && skipEdge === "Left")) {
+            const dLeft = Math.abs(my.x - (r.x + r.w));
+            if (dLeft < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
+              if (dLeft < bestDist) { bestDist = dLeft; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
+            }
           }
         }
 
         if (bestEdge && bestDist < SNAP_THRESHOLD) {
-          // Snap!
-          if (snapEdgeRef.current !== bestEdge) {
+          // Snap! (only if target/edge changed)
+          if (snapEdgeRef.current !== bestEdge || snapTargetRef.current !== bestTarget) {
             snapWidget(winLabel, bestTarget, bestEdge, bestOffset).catch(() => {});
             setSnapEdge(bestEdge);
+            snapTargetRef.current = bestTarget;
           }
         } else if (snapEdgeRef.current) {
           // Check if still close enough to stay snapped
           if (bestDist > UNSNAP_THRESHOLD) {
             unsnapWidget(winLabel).catch(() => {});
             setSnapEdge(null);
+            snapTargetRef.current = "";
           }
         }
       } catch {}
