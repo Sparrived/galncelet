@@ -442,8 +442,23 @@ pub fn list_branches(repo_root: &str) -> Result<Vec<GitBranch>, String> {
 }
 
 /// Switch to a different branch.
+/// For remote branches (e.g. "origin/main"), creates a local tracking branch
+/// instead of entering detached HEAD state.
 pub fn checkout_branch(repo_root: &str, branch: &str) -> Result<String, String> {
-    let output = run_git(repo_root, &["checkout", branch])?;
+    // Remote branch like "origin/main" — create local tracking branch
+    if let Some((remote, name)) = branch.split_once('/') {
+        if !remote.is_empty() && !name.is_empty() {
+            // Try: git switch <name> (works if local branch exists)
+            if let Ok(output) = run_git(repo_root, &["switch", name]) {
+                return Ok(output.trim().to_string());
+            }
+            // Fallback: git switch -c <name> <remote>/<name>
+            let output = run_git(repo_root, &["switch", "-c", name, branch])?;
+            return Ok(output.trim().to_string());
+        }
+    }
+    // Local branch
+    let output = run_git(repo_root, &["switch", branch])?;
     Ok(output.trim().to_string())
 }
 
