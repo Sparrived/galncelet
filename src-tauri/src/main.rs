@@ -214,6 +214,42 @@ fn unwatch_git_repo(watcher: tauri::State<'_, Arc<GitWatcherManager>>, repo_path
     watcher.unwatch(&repo_path);
 }
 
+/// Tauri command: open the global settings window.
+#[tauri::command]
+fn open_settings_window(app: tauri::AppHandle) {
+    let label = "settings";
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let url = "index.html?widget=settings";
+    let win = tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App(url.into()),
+    )
+    .title("Galncelet 设置")
+    .inner_size(400.0, 500.0)
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .maximizable(false)
+    .skip_taskbar(true)
+    .visible(true)
+    .build()
+    .expect("failed to create settings window");
+
+    let win_handle = win.clone();
+    win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = win_handle.hide();
+        }
+    });
+}
+
 /// Tauri command: open a plugin settings window.
 #[tauri::command]
 fn open_plugin_settings(app: tauri::AppHandle, plugin_id: String) {
@@ -452,6 +488,32 @@ fn main() {
                 }
             });
 
+            // Create settings window (hidden by default)
+            let settings_url = "index.html?widget=settings";
+            let settings_win = tauri::WebviewWindowBuilder::new(
+                &handle,
+                "settings",
+                tauri::WebviewUrl::App(settings_url.into()),
+            )
+            .title("Galncelet 设置")
+            .inner_size(400.0, 500.0)
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .resizable(false)
+            .maximizable(false)
+            .skip_taskbar(true)
+            .visible(false)
+            .build()
+            .expect("failed to create settings window");
+            let settings_handle = settings_win.clone();
+            settings_win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = settings_handle.hide();
+                }
+            });
+
             // Browser extension setup (copy to app data, write registry)
             browser_ext::setup(&handle);
 
@@ -522,6 +584,7 @@ fn main() {
             window_attach::move_snap_group,
             create_plugin_window,
             open_manage_window,
+            open_settings_window,
             open_plugin_settings,
             watch_git_repo,
             unwatch_git_repo,

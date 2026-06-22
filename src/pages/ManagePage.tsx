@@ -6,7 +6,7 @@ import {
   setAttachWhitelist, createPluginWindow, listVisibleWindows,
   selectFolder, getStatus, updateCardWidth,
   type WindowEntry,
-  setHideInFullscreen,
+  openSettingsWindow,
 } from "../lib/api";
 import type { AppSettings } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
@@ -217,38 +217,12 @@ export default function ManagePage() {
       <header className="manage-header">
         <h2>Galncelet</h2>
         <div className="manage-header-actions">
+          <button className="btn" onClick={() => openSettingsWindow()} title="全局设置">⚙️</button>
           <button className="btn btn-close" onClick={handleClose} title="关闭">&#10005;</button>
         </div>
       </header>
 
-      <div className="manage-content">
-        {/* ─── Global Settings ─── */}
-        <div className="manage-list" style={{ marginBottom: 12 }}>
-          <div className="manage-item">
-            <div className="manage-item-info">
-              <span className="manage-item-icon">🖥️</span>
-              <div className="manage-item-text">
-                <span className="manage-item-title">全屏时隐藏挂件</span>
-                <span className="manage-item-desc">聚焦全屏程序时自动隐藏所有挂件</span>
-              </div>
-            </div>
-            <div className="manage-item-actions">
-              <button
-                className={`toggle ${settings.hideFullscreen ? "toggle-on" : ""}`}
-                onClick={async () => {
-                  const next = !settings.hideFullscreen;
-                  await updateSettings({ hideFullscreen: next });
-                  setHideInFullscreen(next).catch(() => {});
-                }}
-                title={settings.hideFullscreen ? "关闭" : "开启"}
-              >
-                <span className="toggle-knob" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="manage-list">
+      <div className="manage-content"><div className="manage-list">
           {plugins.map((p) => {
             const enabled = settings.panelVisibility[p.id] !== false;
             return (

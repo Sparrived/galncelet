@@ -125,6 +125,10 @@ export async function openManageWindow(): Promise<void> {
   return invoke<void>("open_manage_window");
 }
 
+export async function openSettingsWindow(): Promise<void> {
+  return invoke<void>("open_settings_window");
+}
+
 export async function openPluginSettings(pluginId: string): Promise<void> {
   return invoke<void>("open_plugin_settings", { pluginId });
 }
@@ -139,6 +143,10 @@ export async function setAttachWhitelist(windowLabel: string, patterns: string[]
 
 export async function setAttachRemember(windowLabel: string, remember: boolean): Promise<void> {
   return invoke<void>("set_attach_remember", { windowLabel, remember });
+}
+
+export async function setHideInFullscreen(enabled: boolean): Promise<void> {
+  return invoke<void>("set_hide_in_fullscreen", { enabled });
 }
 
 export interface WindowEntry {

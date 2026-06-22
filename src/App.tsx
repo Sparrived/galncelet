@@ -9,6 +9,7 @@ import { setPluginVisible } from "./lib/api";
 const pluginModules = import.meta.glob("./addons/*/index.tsx");
 
 import ManagePage from "./pages/ManagePage";
+import SettingsPage from "./pages/SettingsPage";
 
 function getWidgetType(): string {
   const params = new URLSearchParams(window.location.search);
@@ -60,6 +61,10 @@ export default function App() {
 
   if (widgetType === "manage") {
     return <div className="app"><ManagePage /></div>;
+  }
+
+  if (widgetType === "settings") {
+    return <div className="app"><SettingsPage /></div>;
   }
 
   const plugin = getPlugin(widgetType);
