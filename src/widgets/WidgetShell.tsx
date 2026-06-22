@@ -108,9 +108,13 @@ export function WidgetShell({
     loadSettings().then((s) => {
       const ws = s.windowStates[pluginId];
       if (ws) {
-        // Restore position
+        // Restore position (center on screen if no saved position)
         if (ws.x != null && ws.y != null) {
           win.setPosition(new LogicalPosition(ws.x, ws.y)).catch(() => {});
+        } else {
+          const cx = Math.round((window.screen.width - (s.cardWidth || 360)) / 2);
+          const cy = Math.round((window.screen.height - 400) / 2);
+          win.setPosition(new LogicalPosition(Math.max(0, cx), Math.max(0, cy))).catch(() => {});
         }
         // Restore height
         if (ws.height != null) {
@@ -288,11 +292,14 @@ export function WidgetShell({
   const handleClose = useCallback(async () => {
     try {
       if (onClose) await onClose();
-      // Reset saved position so widget reopens at default location
+      // Remove snap relationships and reset saved position
+      unsnapWidget(winLabel).catch(() => {});
+      setSnapEdge(null);
+      snapTargetRef.current = "";
       saveWindowState(pluginId, { x: null, y: null, height: null }).catch(() => {});
       await win.hide();
     } catch {}
-  }, [win, onClose, pluginId]);
+  }, [win, winLabel, onClose, pluginId]);
 
   const contextValue = useMemo(() => ({ collapsed }), [collapsed]);
 
