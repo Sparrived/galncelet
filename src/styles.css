@@ -1974,11 +1974,15 @@ html, body, #root {
 
 .sm-panel {
   padding: 6px;
-  overflow: visible;
+  overflow: hidden;
   min-height: min-content;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.sm-panel::-webkit-scrollbar {
+  display: none;
 }
 
 /* ── Gauge Row ── */
