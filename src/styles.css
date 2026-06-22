@@ -1146,14 +1146,12 @@ html, body, #root {
 .branch-dropdown {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
   min-width: 200px;
-  max-width: 360px;
+  max-width: calc(100vw - 16px);
   max-height: 280px;
   overflow-y: auto;
   background: var(--glass-bg);
-  backdrop-filter: blur(40px) saturate(1.6);
-  -webkit-backdrop-filter: blur(40px) saturate(1.6);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
