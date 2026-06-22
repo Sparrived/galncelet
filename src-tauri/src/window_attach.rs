@@ -47,6 +47,7 @@ pub struct WidgetRect {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    pub attach_enabled: bool,
 }
 
 pub struct AttachState {
@@ -374,7 +375,7 @@ fn get_widget_rect(app: &tauri::AppHandle, label: &str) -> Option<WidgetRect> {
     let win = app.get_webview_window(label)?;
     let pos = win.outer_position().ok()?;
     let size = win.outer_size().ok()?;
-    Some(WidgetRect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 })
+    Some(WidgetRect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32, attach_enabled: false })
 }
 
 /// Snap a widget to another widget's edge. Moves the widget to align.
@@ -430,16 +431,22 @@ pub fn get_snap_info(
 
 /// Get physical rects of all visible widget windows.
 #[tauri::command]
-pub fn get_all_widget_rects(app: tauri::AppHandle) -> HashMap<String, WidgetRect> {
+pub fn get_all_widget_rects(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<AttachState>>,
+) -> HashMap<String, WidgetRect> {
+    let attach = state.attach_enabled.lock().unwrap();
     let mut rects = HashMap::new();
     for (label, win) in app.webview_windows() {
         if label.starts_with("widget-") {
             if win.is_visible().unwrap_or(false) {
                 if let Ok(pos) = win.outer_position() {
                     if let Ok(size) = win.outer_size() {
+                        let ae = attach.get(&label).copied().unwrap_or(false);
                         rects.insert(label, WidgetRect {
                             x: pos.x, y: pos.y,
                             w: size.width as i32, h: size.height as i32,
+                            attach_enabled: ae,
                         });
                     }
                 }

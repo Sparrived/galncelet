@@ -165,6 +165,9 @@ export function WidgetShell({
         // During cooldown after snap/unsnap, skip detection
         if (snapCooldownRef.current) return;
 
+        // Skip snap for widgets attached to foreground windows
+        if (attachEnabledRef.current) return;
+
         // If already snapped, only check unsnap (distance > threshold)
         const curEdge = snapEdgeRef.current;
         const curTarget = snapTargetRef.current;
@@ -203,6 +206,7 @@ export function WidgetShell({
 
         for (const [label, r] of Object.entries(rects)) {
           if (label === winLabel) continue;
+          if (r.attach_enabled) continue; // Skip foreground-attached widgets
           const dBottom = Math.abs((my.y + my.h) - r.y);
           if (dBottom < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
             if (dBottom < bestDist) { bestDist = dBottom; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }

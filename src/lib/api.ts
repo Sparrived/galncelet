@@ -225,6 +225,7 @@ export interface WidgetRect {
   y: number;
   w: number;
   h: number;
+  attach_enabled: boolean;
 }
 
 export async function snapWidget(label: string, targetLabel: string, edge: SnapEdge, offset: number): Promise<void> {
