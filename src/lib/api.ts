@@ -82,40 +82,14 @@ export async function listVisibleWindows(): Promise<WindowEntry[]> {
   return invoke<WindowEntry[]>("list_visible_windows");
 }
 
-// ─── Widget Snap ───
-
-export type SnapEdge = "Top" | "Bottom" | "Left" | "Right";
-
-export interface SnapTarget {
-  target_label: string;
-  edge: SnapEdge;
-  offset: number;
+export async function setPluginHotkey(pluginId: string, hotkey: string | null): Promise<void> {
+  return invoke<void>("set_plugin_hotkey", { pluginId, hotkey });
 }
 
-export interface WidgetRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  attach_enabled: boolean;
+export async function setWidgetSequence(sequence: string[]): Promise<void> {
+  return invoke<void>("set_widget_sequence", { sequence });
 }
 
-export async function snapWidget(label: string, targetLabel: string, edge: SnapEdge, offset: number): Promise<void> {
-  return invoke<void>("snap_widget", { label, targetLabel, edge, offset });
-}
-
-export async function unsnapWidget(label: string): Promise<void> {
-  return invoke<void>("unsnap_widget", { label });
-}
-
-export async function getSnapInfo(label: string): Promise<SnapTarget | null> {
-  return invoke<SnapTarget | null>("get_snap_info", { label });
-}
-
-export async function getAllWidgetRects(): Promise<Record<string, WidgetRect>> {
-  return invoke<Record<string, WidgetRect>>("get_all_widget_rects");
-}
-
-export async function moveSnapGroup(label: string, dx: number, dy: number): Promise<void> {
-  return invoke<void>("move_snap_group", { label, dx, dy });
+export async function setSequenceHotkey(hotkey: string | null): Promise<void> {
+  return invoke<void>("set_sequence_hotkey", { hotkey });
 }

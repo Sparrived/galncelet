@@ -422,6 +422,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -451,9 +452,13 @@ fn main() {
             let mut app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
             app_settings.ensure_plugin_visibility(&manifests);
             println!("[setup] creating widget windows...");
+            let seq_set: std::collections::HashSet<String> = app_settings.widget_sequence.iter().cloned().collect();
             for manifest in &manifests {
-                println!("[setup] loading plugin: {} (visible={})", manifest.id, app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true));
-                if !app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true) {
+                let visible = app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true);
+                let in_sequence = seq_set.contains(&manifest.id);
+                println!("[setup] loading plugin: {} (visible={}, seq={})", manifest.id, visible, in_sequence);
+                // Create window if visible OR if it's in the widget sequence
+                if !visible && !in_sequence {
                     continue;
                 }
                 let label = format!("widget-{}", manifest.id);
@@ -463,6 +468,17 @@ fn main() {
                 let remember = manifest.default_attach_remember.unwrap_or(false);
                 let wl = manifest.default_whitelist.clone().unwrap_or_default();
                 create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl);
+            }
+
+            // Hide sequence widgets that aren't the first (first one stays visible)
+            if app_settings.widget_sequence.len() > 1 {
+                for pid in &app_settings.widget_sequence[1..] {
+                    let label = format!("widget-{}", pid);
+                    if let Some(win) = handle.get_webview_window(&label) {
+                        let _ = win.hide();
+                        println!("[setup] hidden sequence widget: {}", pid);
+                    }
+                }
             }
 
             // List all created windows
@@ -532,6 +548,10 @@ fn main() {
             let app_handle = app.handle().clone();
             window_attach::start_attach_loop(app_handle, attach_state);
 
+            // Register plugin hotkeys
+            let app_handle = app.handle().clone();
+            settings::register_all_hotkeys(&app_handle, &app_settings);
+
             // Start page-notes WebSocket server
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -578,6 +598,9 @@ fn main() {
             settings::save_settings,
             settings::save_window_state,
             settings::set_plugin_visible,
+            settings::set_plugin_hotkey,
+            settings::set_widget_sequence,
+            settings::set_sequence_hotkey,
             update_card_width,
             set_body_collapsed,
             set_attach_enabled,
@@ -589,11 +612,6 @@ fn main() {
             clipboard_history::delete_clipboard_entry,
             clipboard_history::clear_clipboard_history,
             window_attach::list_visible_windows,
-            window_attach::snap_widget,
-            window_attach::unsnap_widget,
-            window_attach::get_snap_info,
-            window_attach::get_all_widget_rects,
-            window_attach::move_snap_group,
             create_plugin_window,
             open_manage_window,
             open_settings_window,

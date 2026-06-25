@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for all windows",
-  "windows": ["main", "manage", "settings-*", "widget-*"],
+  "windows": ["main", "manage", "settings", "settings-*", "widget-*"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -22,6 +22,11 @@
     "core:window:allow-is-visible",
     "core:tray:default",
     "dialog:default",
-    "shell:default"
+    "shell:default",
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-unregister-all",
+    "global-shortcut:allow-is-registered"
   ]
 }

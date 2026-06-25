@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
   setAttachWhitelist, createPluginWindow, listVisibleWindows,
-  updateCardWidth,
+  updateCardWidth, setPluginHotkey, setWidgetSequence, setSequenceHotkey,
   type WindowEntry,
   openSettingsWindow,
 } from "../lib/api";
@@ -16,11 +16,40 @@ export default function ManagePage() {
   const [activePlugin, setActivePlugin] = useState<string | null>(null);
   const [visibleWindows, setVisibleWindows] = useState<WindowEntry[]>([]);
   const [scanningWindows, setScanningWindows] = useState(false);
+  const [recordingHotkey, setRecordingHotkey] = useState(false);
+  const [recordingSeqHotkey, setRecordingSeqHotkey] = useState(false);
+  const [pendingDisplay, setPendingDisplay] = useState("");
+  const hotkeyInputRef = useRef<HTMLDivElement>(null);
+  const seqHotkeyInputRef = useRef<HTMLDivElement>(null);
   const plugins = getAllPlugins();
 
   useEffect(() => {
     loadSettings().then(setSettings).catch(() => {});
   }, []);
+
+  // Focus hotkey input when recording starts
+  useEffect(() => {
+    if (recordingHotkey) {
+      hotkeyInputRef.current?.focus();
+      setPendingDisplay("");
+      startRecording(
+        (hk) => { saveHotkey(activePlugin!, hk); setRecordingHotkey(false); },
+        () => setRecordingHotkey(false),
+        setPendingDisplay,
+      );
+    }
+  }, [recordingHotkey]);
+  useEffect(() => {
+    if (recordingSeqHotkey) {
+      seqHotkeyInputRef.current?.focus();
+      setPendingDisplay("");
+      startRecording(
+        (hk) => { saveSequenceHotkey(hk); setRecordingSeqHotkey(false); },
+        () => setRecordingSeqHotkey(false),
+        setPendingDisplay,
+      );
+    }
+  }, [recordingSeqHotkey]);
 
   const handleClose = () => {
     try { getCurrentWindow().close(); } catch {}
@@ -83,16 +112,172 @@ export default function ManagePage() {
     finally { setScanningWindows(false); }
   };
 
+  // Key code → readable display name (matches Rust parse_shortcut)
+  const KEY_NAMES: Record<string, string> = {
+    ControlLeft: "Ctrl", ControlRight: "Ctrl",
+    ShiftLeft: "Shift", ShiftRight: "Shift",
+    AltLeft: "Alt", AltRight: "Alt",
+    MetaLeft: "Super", MetaRight: "Super",
+  };
+  const codeToName = (code: string): string => {
+    if (KEY_NAMES[code]) return KEY_NAMES[code];
+    if (code.startsWith("Key")) return code.replace("Key", "").toLowerCase();
+    if (code.startsWith("Digit")) return code.replace("Digit", "");
+    if (code.length <= 3 && code.startsWith("F")) return code.toLowerCase();
+    const map: Record<string, string> = {
+      Space: "space", Tab: "tab", Enter: "enter", Escape: "escape", Backspace: "backspace",
+      Slash: "slash", Backslash: "backslash", Period: "period", Comma: "comma",
+      Semicolon: "semicolon", Quote: "quote",
+      BracketLeft: "bracketleft", BracketRight: "bracketright",
+      Minus: "minus", Equal: "equal", Backquote: "backquote",
+      ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+      Delete: "delete", Insert: "insert", Home: "home", End: "end",
+      PageUp: "pageup", PageDown: "pagedown",
+    };
+    return map[code] || code.toLowerCase();
+  };
+
+  // Held-keys tracking for hotkey recording
+  const heldKeysRef = useRef(new Set<string>());
+  const pendingPartsRef = useRef<string[]>([]);
+
+  const startRecording = (onConfirm: (hotkey: string) => void, onCancel: () => void, onDisplay: (text: string) => void) => {
+    heldKeysRef.current.clear();
+    pendingPartsRef.current = [];
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Enter confirms (not part of the combo)
+      if (e.code === "Enter") {
+        cleanup();
+        if (pendingPartsRef.current.length >= 2) {
+          onConfirm(pendingPartsRef.current.join("+"));
+        } else {
+          onCancel();
+        }
+        return;
+      }
+      // Escape cancels
+      if (e.code === "Escape") {
+        cleanup();
+        onCancel();
+        return;
+      }
+
+      heldKeysRef.current.add(e.code);
+
+      // Build display: modifiers first, then non-modifier keys
+      const modifiers: string[] = [];
+      const keys: string[] = [];
+      for (const k of heldKeysRef.current) {
+        const name = codeToName(k);
+        if (KEY_NAMES[k]) modifiers.push(name);
+        else keys.push(name);
+      }
+      pendingPartsRef.current = [...modifiers, ...keys];
+      onDisplay(pendingPartsRef.current.join(" + "));
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      heldKeysRef.current.delete(e.code);
+      // Rebuild display from remaining held keys
+      const modifiers: string[] = [];
+      const keys: string[] = [];
+      for (const k of heldKeysRef.current) {
+        const name = codeToName(k);
+        if (KEY_NAMES[k]) modifiers.push(name);
+        else keys.push(name);
+      }
+      pendingPartsRef.current = [...modifiers, ...keys];
+      onDisplay(pendingPartsRef.current.join(" + "));
+    };
+
+    const cleanup = () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+  };
+
+  const saveHotkey = async (pluginId: string, hotkey: string | null) => {
+    await setPluginHotkey(pluginId, hotkey);
+    const newHotkeys = { ...settings.pluginHotkeys };
+    if (hotkey) newHotkeys[pluginId] = hotkey;
+    else delete newHotkeys[pluginId];
+    setSettings({ ...settings, pluginHotkeys: newHotkeys });
+  };
+
+  // ─── Sequence helpers ───
+  const seq = settings.widgetSequence;
+
+  // Ensure all sequence widget windows exist (create if missing)
+  const ensureSequenceWindows = async (ids: string[]) => {
+    for (const id of ids) {
+      const p = plugins.find((pl) => pl.id === id);
+      if (!p) continue;
+      const win = await Window.getByLabel(`widget-${id}`);
+      if (!win) {
+        await createPluginWindow(
+          p.id, p.title,
+          p.defaultWidth ?? 360, p.defaultHeight ?? 600,
+          p.defaultAttachEnabled !== false,
+          p.defaultAttachRemember === true,
+          p.defaultWhitelist ?? [],
+        );
+      }
+    }
+  };
+
+  const applySequence = async (newSeq: string[]) => {
+    await ensureSequenceWindows(newSeq);
+    await setWidgetSequence(newSeq);
+    await saveSettings({ ...settings, widgetSequence: newSeq });
+    setSettings({ ...settings, widgetSequence: newSeq });
+  };
+
+  const addToSequence = async (pluginId: string) => {
+    if (seq.includes(pluginId)) return;
+    await applySequence([...seq, pluginId]);
+  };
+
+  const removeFromSequence = async (pluginId: string) => {
+    await applySequence(seq.filter((id) => id !== pluginId));
+  };
+
+  const moveInSequence = async (pluginId: string, direction: -1 | 1) => {
+    const idx = seq.indexOf(pluginId);
+    if (idx < 0) return;
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= seq.length) return;
+    const newSeq = [...seq];
+    [newSeq[idx], newSeq[newIdx]] = [newSeq[newIdx], newSeq[idx]];
+    await applySequence(newSeq);
+  };
+
+  const saveSequenceHotkey = async (hotkey: string | null) => {
+    await setSequenceHotkey(hotkey);
+    setSettings({ ...settings, sequenceHotkey: hotkey });
+  };
+
+  const availableForSequence = plugins.filter((p) => !seq.includes(p.id));
+
   // ─── Plugin settings view ───
   if (activePlugin) {
     const plugin = getPluginById(activePlugin);
     const whitelist = getWhitelist(activePlugin);
+    const currentHotkey = settings.pluginHotkeys[activePlugin];
 
     return (
       <div className="manage-page">
         <header className="manage-header">
           <div className="manage-header-actions">
-            <button className="btn" onClick={() => setActivePlugin(null)} title="返回">
+            <button className="btn" onClick={() => { setActivePlugin(null); setRecordingHotkey(false); }} title="返回">
               &#8592;
             </button>
           </div>
@@ -103,6 +288,33 @@ export default function ManagePage() {
         </header>
 
         <div className="manage-content settings-page-body">
+          {/* Hotkey config */}
+          <div className="settings-group">
+            <label className="settings-label">快捷键</label>
+            <div className="settings-sublabel">按下组合键快速显示/隐藏此挂件（需含 Ctrl/Alt/Shift 修饰键）</div>
+            <div className="hotkey-row">
+              {recordingHotkey ? (
+                <div
+                  ref={hotkeyInputRef}
+                  className="hotkey-input hotkey-recording"
+                  tabIndex={0}
+                  onBlur={() => setRecordingHotkey(false)}
+                >
+                  {pendingDisplay || "按下组合键，Enter 确认"}
+                </div>
+              ) : (
+                <div className="hotkey-input" onClick={() => setRecordingHotkey(true)}>
+                  {currentHotkey || "点击设置快捷键"}
+                </div>
+              )}
+              {currentHotkey && !recordingHotkey && (
+                <button className="btn-action hotkey-clear" onClick={() => saveHotkey(activePlugin, null)}>
+                  清除
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Whitelist editor */}
           {plugin?.showAttachButton !== false && (
             <div className="settings-group">
@@ -208,6 +420,67 @@ export default function ManagePage() {
             );
           })}
           {plugins.length === 0 && <div className="manage-empty">暂无已注册的插件</div>}
+        </div>
+
+        {/* ─── Widget Sequence ─── */}
+        <div className="settings-group sequence-section">
+          <label className="settings-label">挂件序列</label>
+          <div className="settings-sublabel">将挂件加入序列，通过快捷键在同一位置依次切换</div>
+
+          {/* Sequence hotkey */}
+          <div className="hotkey-row" style={{ marginBottom: 10 }}>
+            {recordingSeqHotkey ? (
+              <div
+                ref={seqHotkeyInputRef}
+                className="hotkey-input hotkey-recording"
+                tabIndex={0}
+                onBlur={() => setRecordingSeqHotkey(false)}
+              >
+                {pendingDisplay || "按下组合键，Enter 确认"}
+              </div>
+            ) : (
+              <div className="hotkey-input" onClick={() => setRecordingSeqHotkey(true)}>
+                {settings.sequenceHotkey || "点击设置切换快捷键"}
+              </div>
+            )}
+            {settings.sequenceHotkey && !recordingSeqHotkey && (
+              <button className="btn-action hotkey-clear" onClick={() => saveSequenceHotkey(null)}>
+                清除
+              </button>
+            )}
+          </div>
+
+          {/* Current sequence */}
+          {seq.length > 0 && (
+            <div className="sequence-list">
+              {seq.map((id, i) => {
+                const p = getPluginById(id);
+                return (
+                  <div key={id} className="sequence-item">
+                    <span className="sequence-index">{i + 1}</span>
+                    <span className="sequence-icon">{p?.icon || "📦"}</span>
+                    <span className="sequence-name">{p?.title || id}</span>
+                    <div className="sequence-actions">
+                      <button className="btn-sm" disabled={i === 0} onClick={() => moveInSequence(id, -1)}>↑</button>
+                      <button className="btn-sm" disabled={i === seq.length - 1} onClick={() => moveInSequence(id, 1)}>↓</button>
+                      <button className="btn-sm btn-sm-danger" onClick={() => removeFromSequence(id)}>✕</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add to sequence */}
+          {availableForSequence.length > 0 && (
+            <div className="sequence-add">
+              {availableForSequence.map((p) => (
+                <button key={p.id} className="btn-action sequence-add-btn" onClick={() => addToSequence(p.id)}>
+                  {p.icon || "📦"} {p.title}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

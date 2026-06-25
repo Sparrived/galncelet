@@ -1,12 +1,9 @@
 import { type ReactNode, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
-import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, setPluginVisible, getAllWidgetRects, snapWidget, unsnapWidget, moveSnapGroup, type SnapEdge } from "../lib/api";
+import { setBodyCollapsed, setAttachEnabled as setAttachEnabledApi, setAttachWhitelist, setAttachRemember, loadSettings, saveWindowState, setPluginVisible } from "../lib/api";
 import type { WindowState } from "../lib/types";
 import { HEADER_H, WidgetProvider, type ContextMenuItem } from "./WidgetContext";
 import { CloseButton, CollapseButton, AttachButton, RememberButton } from "./WidgetButtons";
-
-const SNAP_THRESHOLD = 20;
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -38,8 +35,6 @@ export function WidgetShell({
   const [collapsed, setCollapsed] = useState(false);
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
   const [attachRemember, setAttachRememberState] = useState(defaultAttachRemember);
-  const [snapEdge, setSnapEdge] = useState<SnapEdge | null>(null);
-  const [incomingEdge, setIncomingEdge] = useState<SnapEdge | null>(null);
   const win = getCurrentWindow();
   const winLabel = win.label;
   const pluginId = winLabel.replace("widget-", "");
@@ -48,18 +43,11 @@ export function WidgetShell({
   const preCollapseHeight = useRef<number | null>(null);
   const actualHeight = useRef<number>(0);
   const collapsedRef = useRef(false);
-  const prevPosRef = useRef<{ x: number; y: number } | null>(null);
-  const snapEdgeRef = useRef<SnapEdge | null>(null);
-  const snapTargetRef = useRef<string>("");
-  const snapCooldownRef = useRef(false);
-  snapEdgeRef.current = snapEdge;
 
   // Body drag: make blank areas draggable
   const handleBodyMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    // Don't drag if clicking on interactive elements
     if (target.closest("button, input, select, textarea, a, [data-no-drag]")) return;
-    // Don't drag if inside header (already handled by -webkit-app-region)
     if (target.closest(".widget-header")) return;
     e.preventDefault();
     win.startDragging().catch(() => {});
@@ -71,7 +59,7 @@ export function WidgetShell({
   attachEnabledRef.current = attachEnabled;
   attachRememberRef.current = attachRemember;
 
-  // Debounced save of window state — reads latest values from refs
+  // Debounced save of window state
   const saveState = useCallback((partial: Partial<WindowState>) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -84,7 +72,7 @@ export function WidgetShell({
           x = pos.x / scale;
           y = pos.y / scale;
         } catch {
-          // Window might be hidden — save without position
+          // Window might be hidden
         }
         const current: WindowState = {
           x, y,
@@ -107,7 +95,6 @@ export function WidgetShell({
     loadSettings().then((s) => {
       const ws = s.windowStates[pluginId];
       if (ws) {
-        // Restore position (center on screen if no saved position)
         if (ws.x != null && ws.y != null) {
           win.setPosition(new LogicalPosition(ws.x, ws.y)).catch(() => {});
         } else {
@@ -115,167 +102,33 @@ export function WidgetShell({
           const cy = Math.round((window.screen.height - 400) / 2);
           win.setPosition(new LogicalPosition(Math.max(0, cx), Math.max(0, cy))).catch(() => {});
         }
-        // Restore height
         if (ws.height != null) {
           actualHeight.current = ws.height;
           win.setSize(new LogicalSize(s.cardWidth, ws.height)).catch(() => {});
         }
-        // Restore attach state
         if (ws.attachEnabled != null) {
           setAttachEnabledState(ws.attachEnabled);
           setAttachEnabledApi(winLabel, ws.attachEnabled);
         }
-        // Restore whitelist: use saved if non-empty, otherwise plugin default
         const wl = (ws.whitelist && ws.whitelist.length > 0) ? ws.whitelist : defaultWhitelist;
         if (wl.length > 0) {
           setAttachWhitelist(winLabel, wl);
         }
-        // Restore attach remember mode
         if (ws.attachRemember) {
           setAttachRememberState(true);
           setAttachRemember(winLabel, true);
         }
       }
-      // Apply default attach if no saved state
       if (!ws?.attachEnabled && defaultAttachEnabled !== false) {
         setAttachEnabledApi(winLabel, true);
       }
     }).catch(() => {});
   }, []);
 
-  // Track window position and size changes + snap detection
-  // Snap: preview glow while dragging, commit on mouse release
+  // Track window position and size changes
   useEffect(() => {
-    let pendingSnap: { target: string; edge: SnapEdge; offset: number } | null = null;
-
-    const OPPOSITE_EDGE: Record<SnapEdge, SnapEdge> = { Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" };
-
-    const commitSnap = () => {
-      if (pendingSnap) {
-        // Set cooldown FIRST to prevent onMoved from interfering
-        snapCooldownRef.current = true;
-        snapWidget(winLabel, pendingSnap.target, pendingSnap.edge, pendingSnap.offset).catch(() => {});
-        setSnapEdge(OPPOSITE_EDGE[pendingSnap.edge]);
-        snapTargetRef.current = pendingSnap.target;
-        pendingSnap = null;
-        setTimeout(() => { snapCooldownRef.current = false; }, 500);
-      } else if (snapEdgeRef.current && snapTargetRef.current) {
-        snapCooldownRef.current = true;
-        unsnapWidget(winLabel).catch(() => {});
-        setSnapEdge(null);
-        snapTargetRef.current = "";
-        setIncomingEdge(null);
-        setTimeout(() => { snapCooldownRef.current = false; }, 500);
-      }
-    };
-
-    const handleMouseUp = () => { commitSnap(); };
-    document.addEventListener("mouseup", handleMouseUp);
-
-    // Poll: check if any widget is snapped TO us (for incoming glow)
-    const pollIncoming = setInterval(async () => {
-      try {
-        const allRects = await getAllWidgetRects();
-        const myLabel = winLabel;
-        // Check all snap targets — if any target is us, show glow
-        for (const [label, rect] of Object.entries(allRects)) {
-          if (label === myLabel) continue;
-          // We can't directly query reverse snaps from frontend,
-          // so we check proximity: if another widget is exactly aligned with our edge
-          const my = allRects[myLabel];
-          if (!my || rect.attach_enabled) continue;
-          // Check if rect is exactly touching our edges
-          if (Math.abs(rect.y - (my.y + my.h)) < 2 && rect.x > my.x - rect.w && rect.x < my.x + my.w) {
-            setIncomingEdge("Bottom"); // They're at our bottom
-            return;
-          }
-          if (Math.abs((rect.y + rect.h) - my.y) < 2 && rect.x > my.x - rect.w && rect.x < my.x + my.w) {
-            setIncomingEdge("Top");
-            return;
-          }
-          if (Math.abs(rect.x - (my.x + my.w)) < 2 && rect.y > my.y - rect.h && rect.y < my.y + my.h) {
-            setIncomingEdge("Right");
-            return;
-          }
-          if (Math.abs((rect.x + rect.w) - my.x) < 2 && rect.y > my.y - rect.h && rect.y < my.y + my.h) {
-            setIncomingEdge("Left");
-            return;
-          }
-        }
-        setIncomingEdge(null);
-      } catch {}
-    }, 1000);
-
-    const unlistenMove = win.onMoved(async () => {
+    const unlistenMove = win.onMoved(() => {
       saveState({});
-      try {
-        const pos = await win.outerPosition();
-        const scale = window.devicePixelRatio || 1;
-        const px = Math.round(pos.x / scale);
-        const py = Math.round(pos.y / scale);
-
-        // If snapped, move the snap group by the delta
-        if (snapEdgeRef.current && prevPosRef.current) {
-          const dx = pos.x - Math.round(prevPosRef.current.x * scale);
-          const dy = pos.y - Math.round(prevPosRef.current.y * scale);
-          if (dx !== 0 || dy !== 0) {
-            moveSnapGroup(winLabel, dx, dy).catch(() => {});
-          }
-        }
-        prevPosRef.current = { x: px, y: py };
-
-        // Skip detection during cooldown or for foreground-attached widgets
-        if (snapCooldownRef.current || attachEnabledRef.current) return;
-
-        
-
-        // Detect proximity and show preview glow
-        const rects = await getAllWidgetRects();
-        const my = rects[winLabel];
-        if (!my) return;
-
-        let bestDist = Infinity;
-        let bestEdge: SnapEdge | null = null;
-        let bestTarget = "";
-        let bestOffset = 0;
-
-        for (const [label, r] of Object.entries(rects)) {
-          if (label === winLabel) continue;
-          if (r.attach_enabled) continue;
-          // My bottom near target's top → I'm above → snap to target's Top (A的顶边贴B的底边)
-          const dAbove = Math.abs((my.y + my.h) - r.y);
-          if (dAbove < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dAbove < bestDist) { bestDist = dAbove; bestEdge = "Top"; bestTarget = label; bestOffset = my.x; }
-          }
-          // My top near target's bottom → I'm below → snap to target's Bottom
-          const dBelow = Math.abs(my.y - (r.y + r.h));
-          if (dBelow < SNAP_THRESHOLD && my.x > r.x - my.w / 2 && my.x < r.x + r.w - my.w / 2) {
-            if (dBelow < bestDist) { bestDist = dBelow; bestEdge = "Bottom"; bestTarget = label; bestOffset = my.x; }
-          }
-          // My right near target's left → I'm to the left → snap to target's Left
-          const dLeftOf = Math.abs((my.x + my.w) - r.x);
-          if (dLeftOf < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dLeftOf < bestDist) { bestDist = dLeftOf; bestEdge = "Left"; bestTarget = label; bestOffset = my.y; }
-          }
-          // My left near target's right → I'm to the right → snap to target's Right
-          const dRightOf = Math.abs(my.x - (r.x + r.w));
-          if (dRightOf < SNAP_THRESHOLD && my.y > r.y - my.h / 2 && my.y < r.y + r.h - my.h / 2) {
-            if (dRightOf < bestDist) { bestDist = dRightOf; bestEdge = "Right"; bestTarget = label; bestOffset = my.y; }
-          }
-        }
-
-        if (bestEdge && bestDist < SNAP_THRESHOLD) {
-          // Preview glow on A's contact edge (opposite of snap edge)
-          const glowEdge = ({ Top: "Bottom", Bottom: "Top", Left: "Right", Right: "Left" } as Record<SnapEdge, SnapEdge>)[bestEdge];
-          setSnapEdge(glowEdge);
-          pendingSnap = { target: bestTarget, edge: bestEdge, offset: bestOffset };
-        } else {
-          // No edge nearby — clear preview glow
-          setSnapEdge(null);
-          pendingSnap = null;
-        }
-
-      } catch {}
     });
     const unlistenResize = win.onResized(() => {
       if (collapsedRef.current) return;
@@ -285,8 +138,6 @@ export function WidgetShell({
       }).catch(() => {});
     });
     return () => {
-      document.removeEventListener("mouseup", handleMouseUp);
-      clearInterval(pollIncoming);
       unlistenMove.then((fn) => fn());
       unlistenResize.then((fn) => fn());
     };
@@ -298,7 +149,6 @@ export function WidgetShell({
     collapsedRef.current = next;
     const scale = window.devicePixelRatio || 1;
     if (next) {
-      // Save current height before collapsing
       try {
         const size = await win.outerSize();
         preCollapseHeight.current = size.height / scale;
@@ -308,7 +158,6 @@ export function WidgetShell({
       await setBodyCollapsed(winLabel, Math.round(HEADER_H * scale));
       saveState({ height: HEADER_H });
     } else {
-      // Restore to the height before collapsing, or last known height
       const restoreH = preCollapseHeight.current || actualHeight.current || 400;
       await setBodyCollapsed(winLabel, null, Math.round(restoreH * scale));
       saveState({ height: restoreH });
@@ -333,15 +182,6 @@ export function WidgetShell({
   const handleClose = useCallback(async () => {
     try {
       if (onClose) await onClose();
-      // Remove snap relationships and notify target
-      if (snapTargetRef.current) {
-        emit(`snap:clear:${snapTargetRef.current}`, {}).catch(() => {});
-      }
-      unsnapWidget(winLabel).catch(() => {});
-      setSnapEdge(null);
-      setIncomingEdge(null);
-      snapTargetRef.current = "";
-      // Move window to screen center, then clear saved position
       const w = Math.round((window.screen.width - 360) / 2);
       const h = Math.round((window.screen.height - 400) / 2);
       win.setPosition(new LogicalPosition(Math.max(0, w), Math.max(0, h))).catch(() => {});
@@ -351,7 +191,7 @@ export function WidgetShell({
     } catch {}
   }, [win, winLabel, onClose, pluginId]);
 
-  
+
   // ─── Context Menu ───
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [pluginMenuItems, setPluginMenuItems] = useState<ContextMenuItem[]>([]);
@@ -388,7 +228,7 @@ export function WidgetShell({
 
   return (
     <WidgetProvider value={contextValue}>
-      <div className={`widget${snapEdge ? ` widget-snapped snap-edge-${snapEdge.toLowerCase()}` : ""}${incomingEdge ? ` widget-snapped snap-edge-${incomingEdge.toLowerCase()}` : ""}`}>
+      <div className="widget">
         <header className="widget-header">
           <span className="widget-title">{title}</span>
           <div className="widget-header-right">
