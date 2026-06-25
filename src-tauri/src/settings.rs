@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::Manager;
 
 /// Per-window persisted state.
@@ -42,6 +43,15 @@ pub struct AppSettings {
     pub panel_visibility: HashMap<String, bool>,
     /// Per-window persisted state (position, attach, etc.)
     pub window_states: HashMap<String, WindowState>,
+    /// Plugin hotkeys: pluginId → shortcut string (e.g. "Ctrl+Shift+1")
+    #[serde(default)]
+    pub plugin_hotkeys: HashMap<String, String>,
+    /// Widget sequence: ordered plugin IDs that share the same position
+    #[serde(default)]
+    pub widget_sequence: Vec<String>,
+    /// Hotkey to cycle through the widget sequence
+    #[serde(default)]
+    pub sequence_hotkey: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -55,6 +65,9 @@ impl Default for AppSettings {
             saved_repos: Vec::new(),
             panel_visibility: HashMap::new(),
             window_states: HashMap::new(),
+            plugin_hotkeys: HashMap::new(),
+            widget_sequence: Vec::new(),
+            sequence_hotkey: None,
         }
     }
 }
@@ -128,4 +141,249 @@ pub fn save_window_state(
     let mut settings = load_settings(app.clone())?;
     settings.window_states.insert(window_id, state);
     save_settings(app, settings)
+}
+
+/// Tauri command: set or clear a plugin's global hotkey.
+#[tauri::command]
+pub fn set_plugin_hotkey(
+    app: tauri::AppHandle,
+    plugin_id: String,
+    hotkey: Option<String>,
+) -> Result<(), String> {
+    let mut settings = load_settings(app.clone())?;
+    if let Some(hk) = hotkey {
+        settings.plugin_hotkeys.insert(plugin_id, hk);
+    } else {
+        settings.plugin_hotkeys.remove(&plugin_id);
+    }
+    save_settings(app.clone(), settings.clone())?;
+    // Re-register all hotkeys
+    unregister_all_hotkeys(&app);
+    register_all_hotkeys(&app, &settings);
+    Ok(())
+}
+
+/// Tauri command: set the widget sequence order.
+/// Only hides/shows windows — does NOT change panel_visibility (plugins stay enabled).
+#[tauri::command]
+pub fn set_widget_sequence(
+    app: tauri::AppHandle,
+    sequence: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = load_settings(app.clone())?;
+    settings.widget_sequence = sequence.clone();
+    save_settings(app.clone(), settings)?;
+
+    // Hide all sequence windows except the first one
+    SEQUENCE_INDEX.store(0, Ordering::Relaxed);
+    for (i, pid) in sequence.iter().enumerate() {
+        let label = format!("widget-{}", pid);
+        if let Some(win) = app.get_webview_window(&label) {
+            if i == 0 {
+                let _ = win.show();
+            } else {
+                let _ = win.hide();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Tauri command: set or clear the sequence cycle hotkey.
+#[tauri::command]
+pub fn set_sequence_hotkey(
+    app: tauri::AppHandle,
+    hotkey: Option<String>,
+) -> Result<(), String> {
+    let mut settings = load_settings(app.clone())?;
+    settings.sequence_hotkey = hotkey;
+    save_settings(app.clone(), settings.clone())?;
+    unregister_all_hotkeys(&app);
+    register_all_hotkeys(&app, &settings);
+    Ok(())
+}
+
+/// Parse a shortcut string like "Ctrl+Shift+1" and register it.
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+fn parse_shortcut(s: &str) -> Option<Shortcut> {
+    let mut mods = Modifiers::empty();
+    let mut code_str = String::new();
+    for part in s.split('+') {
+        let p = part.trim().to_lowercase();
+        match p.as_str() {
+            "ctrl" | "control" => mods |= Modifiers::CONTROL,
+            "shift" => mods |= Modifiers::SHIFT,
+            "alt" => mods |= Modifiers::ALT,
+            "super" | "win" | "meta" | "cmd" | "command" => mods |= Modifiers::SUPER,
+            other => code_str = other.to_string(),
+        }
+    }
+    let code = match code_str.as_str() {
+        "a" => Code::KeyA, "b" => Code::KeyB, "c" => Code::KeyC, "d" => Code::KeyD,
+        "e" => Code::KeyE, "f" => Code::KeyF, "g" => Code::KeyG, "h" => Code::KeyH,
+        "i" => Code::KeyI, "j" => Code::KeyJ, "k" => Code::KeyK, "l" => Code::KeyL,
+        "m" => Code::KeyM, "n" => Code::KeyN, "o" => Code::KeyO, "p" => Code::KeyP,
+        "q" => Code::KeyQ, "r" => Code::KeyR, "s" => Code::KeyS, "t" => Code::KeyT,
+        "u" => Code::KeyU, "v" => Code::KeyV, "w" => Code::KeyW, "x" => Code::KeyX,
+        "y" => Code::KeyY, "z" => Code::KeyZ,
+        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
+        "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
+        "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8, "9" => Code::Digit9,
+        "f1" => Code::F1, "f2" => Code::F2, "f3" => Code::F3, "f4" => Code::F4,
+        "f5" => Code::F5, "f6" => Code::F6, "f7" => Code::F7, "f8" => Code::F8,
+        "f9" => Code::F9, "f10" => Code::F10, "f11" => Code::F11, "f12" => Code::F12,
+        "space" => Code::Space, "tab" => Code::Tab, "enter" => Code::Enter,
+        "escape" | "esc" => Code::Escape, "backspace" => Code::Backspace,
+        "slash" => Code::Slash, "backslash" => Code::Backslash,
+        "period" | "." => Code::Period, "comma" | "," => Code::Comma,
+        "semicolon" | ";" => Code::Semicolon, "quote" | "'" => Code::Quote,
+        "bracketleft" | "[" => Code::BracketLeft, "bracketright" | "]" => Code::BracketRight,
+        "minus" | "-" => Code::Minus, "equal" | "=" => Code::Equal,
+        "backquote" | "`" => Code::Backquote,
+        "up" => Code::ArrowUp, "down" => Code::ArrowDown,
+        "left" => Code::ArrowLeft, "right" => Code::ArrowRight,
+        "delete" => Code::Delete, "insert" => Code::Insert,
+        "home" => Code::Home, "end" => Code::End,
+        "pageup" => Code::PageUp, "pagedown" => Code::PageDown,
+        "numpad0" => Code::Numpad0, "numpad1" => Code::Numpad1,
+        "numpad2" => Code::Numpad2, "numpad3" => Code::Numpad3,
+        "numpad4" => Code::Numpad4, "numpad5" => Code::Numpad5,
+        "numpad6" => Code::Numpad6, "numpad7" => Code::Numpad7,
+        "numpad8" => Code::Numpad8, "numpad9" => Code::Numpad9,
+        _ => return None,
+    };
+    Some(Shortcut::new(Some(mods), code))
+}
+
+/// Register all plugin hotkeys from settings.
+pub fn register_all_hotkeys(app: &tauri::AppHandle, settings: &AppSettings) {
+    // Register per-plugin hotkeys
+    for (plugin_id, hotkey_str) in &settings.plugin_hotkeys {
+        let shortcut = match parse_shortcut(hotkey_str) {
+            Some(s) => s,
+            None => {
+                eprintln!("[hotkey] invalid shortcut for {}: {}", plugin_id, hotkey_str);
+                continue;
+            }
+        };
+        let pid = plugin_id.clone();
+        let app_handle = app.clone();
+        if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_plugin_visibility(&app_handle, &pid);
+            }
+        }) {
+            eprintln!("[hotkey] failed to register {} for {}: {}", hotkey_str, plugin_id, e);
+        } else {
+            println!("[hotkey] registered {} → {}", hotkey_str, plugin_id);
+        }
+    }
+
+    // Register sequence cycle hotkey
+    if let Some(ref hk) = settings.sequence_hotkey {
+        if !settings.widget_sequence.is_empty() {
+            let shortcut = match parse_shortcut(hk) {
+                Some(s) => s,
+                None => {
+                    eprintln!("[hotkey] invalid sequence shortcut: {}", hk);
+                    return;
+                }
+            };
+            let app_handle = app.clone();
+            if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    cycle_sequence(&app_handle);
+                }
+            }) {
+                eprintln!("[hotkey] failed to register sequence shortcut {}: {}", hk, e);
+            } else {
+                println!("[hotkey] registered sequence {} ({} plugins)", hk, settings.widget_sequence.len());
+            }
+        }
+    }
+}
+
+/// Unregister all global shortcuts.
+pub fn unregister_all_hotkeys(app: &tauri::AppHandle) {
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        eprintln!("[hotkey] failed to unregister all: {}", e);
+    }
+}
+
+/// Toggle a plugin's visibility: if hidden → show, if visible → hide.
+fn toggle_plugin_visibility(app: &tauri::AppHandle, plugin_id: &str) {
+    let label = format!("widget-{}", plugin_id);
+    if let Some(win) = app.get_webview_window(&label) {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+            let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), false);
+            println!("[hotkey] hidden {}", plugin_id);
+        } else {
+            let _ = win.show();
+            let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), true);
+            println!("[hotkey] shown {}", plugin_id);
+        }
+    } else {
+        println!("[hotkey] widget window {} not found, open via manage page", plugin_id);
+    }
+}
+
+/// Global sequence index (which plugin in the sequence is currently active).
+static SEQUENCE_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+/// Cycle to the next widget in the sequence.
+/// Gets position from the currently visible widget, hides it, shows the next one there.
+fn cycle_sequence(app: &tauri::AppHandle) {
+    let settings = match load_settings(app.clone()) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let seq = &settings.widget_sequence;
+    if seq.is_empty() { return; }
+
+    let idx = SEQUENCE_INDEX.load(Ordering::Relaxed);
+    let safe_idx = idx % seq.len();
+    let current_id = &seq[safe_idx];
+
+    // Get position from the currently visible widget (the one being replaced)
+    let current_label = format!("widget-{}", current_id);
+    let pos: Option<(i32, i32)> = app.get_webview_window(&current_label)
+        .and_then(|win| win.outer_position().ok())
+        .map(|p| (p.x, p.y));
+
+    // Hide current widget (window only, plugin stays enabled)
+    if let Some(win) = app.get_webview_window(&current_label) {
+        let _ = win.hide();
+    }
+
+    // Advance index
+    let next_idx = (safe_idx + 1) % seq.len();
+    SEQUENCE_INDEX.store(next_idx, Ordering::Relaxed);
+    let next_id = &seq[next_idx];
+    let next_label = format!("widget-{}", next_id);
+
+    // Show next widget at the same position; skip if window doesn't exist
+    let mut tried = 0;
+    let mut idx_to_show = next_idx;
+    while tried < seq.len() {
+        let id = &seq[idx_to_show];
+        let label = format!("widget-{}", id);
+        if let Some(win) = app.get_webview_window(&label) {
+            if let Some((x, y)) = pos {
+                let _ = win.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition { x, y },
+                ));
+            }
+            let _ = win.show();
+            let _ = win.set_focus();
+            SEQUENCE_INDEX.store(idx_to_show, Ordering::Relaxed);
+            println!("[sequence] switched to {} ({}/{})", id, idx_to_show + 1, seq.len());
+            return;
+        }
+        println!("[sequence] widget {} not found, skipping", id);
+        idx_to_show = (idx_to_show + 1) % seq.len();
+        tried += 1;
+    }
+    println!("[sequence] no available widgets in sequence");
 }

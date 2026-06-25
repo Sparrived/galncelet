@@ -25,6 +25,12 @@ export interface AppSettings {
   windowStates: Record<string, WindowState>;
   /** Hide all widgets when the focused window is fullscreen */
   hideFullscreen: boolean;
+  /** Plugin hotkeys: pluginId → shortcut string (e.g. "ctrl+shift+1") */
+  pluginHotkeys: Record<string, string>;
+  /** Widget sequence: ordered plugin IDs sharing the same position */
+  widgetSequence: string[];
+  /** Hotkey to cycle through the widget sequence */
+  sequenceHotkey: string | null;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -37,4 +43,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   panelVisibility: {},
   windowStates: {},
   hideFullscreen: true,
+  pluginHotkeys: {},
+  widgetSequence: [],
+  sequenceHotkey: null,
 };

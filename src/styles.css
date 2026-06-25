@@ -104,15 +104,6 @@ html, body, #root {
   overflow: visible;
 }
 
-/* ── Widget Snap Indicators (visible inside window) ── */
-.widget-snapped {
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-.snap-edge-bottom { border-bottom: 2px solid var(--mcha-cyan); box-shadow: inset 0 -4px 12px -4px rgba(34, 211, 238, 0.5); }
-.snap-edge-top    { border-top: 2px solid var(--mcha-cyan); box-shadow: inset 0 4px 12px -4px rgba(34, 211, 238, 0.5); }
-.snap-edge-right  { border-right: 2px solid var(--mcha-cyan); box-shadow: inset -4px 0 12px -4px rgba(34, 211, 238, 0.5); }
-.snap-edge-left   { border-left: 2px solid var(--mcha-cyan); box-shadow: inset 4px 0 12px -4px rgba(34, 211, 238, 0.5); }
-
 /* ===== Header ===== */
 .header {
   display: flex;
@@ -1543,6 +1534,131 @@ html, body, #root {
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: 6px;
+}
+
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hotkey-input {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.hotkey-input:hover {
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.hotkey-recording {
+  border-color: #60a5fa;
+  animation: hotkey-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hotkey-pulse {
+  0%, 100% { border-color: #60a5fa; }
+  50% { border-color: rgba(96, 165, 250, 0.3); }
+}
+
+.hotkey-clear {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #f87171;
+  padding: 4px 10px;
+}
+
+.sequence-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.sequence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.sequence-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+}
+
+.sequence-index {
+  width: 18px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sequence-icon {
+  font-size: 14px;
+}
+
+.sequence-name {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.sequence-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.btn-sm {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.btn-sm:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+}
+
+.btn-sm:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.btn-sm-danger {
+  color: #f87171;
+  border-color: rgba(248,113,113,0.2);
+}
+
+.sequence-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sequence-add-btn {
+  font-size: 11px;
+  padding: 4px 10px;
 }
 
 .settings-row {
