@@ -1,3 +1,5 @@
+pub mod git_watcher;
+
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -7,6 +9,10 @@ pub struct GitFileEntry {
     #[serde(rename = "statusCode")]
     pub status_code: String,
     pub staged: bool,
+    /// Lines added (from diff --numstat)
+    pub additions: u32,
+    /// Lines deleted (from diff --numstat)
+    pub deletions: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +23,10 @@ pub struct GitStatus {
     #[serde(rename = "hasHead")]
     pub has_head: bool,
     pub files: Vec<GitFileEntry>,
+    /// Number of commits ahead of upstream
+    pub ahead: u32,
+    /// Number of commits behind upstream
+    pub behind: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +197,8 @@ fn parse_status_porcelain(raw: &[u8]) -> Vec<GitFileEntry> {
                 path: path.to_string(),
                 status_code: "?".to_string(),
                 staged: false,
+                additions: 0,
+                deletions: 0,
             });
             continue;
         }
@@ -241,6 +253,8 @@ fn parse_status_porcelain(raw: &[u8]) -> Vec<GitFileEntry> {
                     path: path.clone(),
                     status_code: x.to_string(),
                     staged: true,
+                    additions: 0,
+                    deletions: 0,
                 });
             }
             if y != '.' {
@@ -248,12 +262,52 @@ fn parse_status_porcelain(raw: &[u8]) -> Vec<GitFileEntry> {
                     path,
                     status_code: y.to_string(),
                     staged: false,
+                    additions: 0,
+                    deletions: 0,
                 });
             }
         }
     }
 
     files
+}
+
+/// Parse `git diff --numstat` output into a map of path → (additions, deletions).
+fn parse_numstat(raw: &[u8]) -> std::collections::HashMap<String, (u32, u32)> {
+    let text = String::from_utf8_lossy(raw);
+    let mut map = std::collections::HashMap::new();
+    for line in text.lines() {
+        if line.is_empty() { continue; }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 3 { continue; }
+        // Binary files show "-" for both
+        let add = parts[0].parse().unwrap_or(0);
+        let del = parts[1].parse().unwrap_or(0);
+        map.insert(parts[2].to_string(), (add, del));
+    }
+    map
+}
+
+/// Get ahead/behind counts relative to upstream. Returns (0, 0) if no upstream.
+fn get_ahead_behind(repo_root: &str) -> (u32, u32) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let parts: Vec<&str> = text.trim().split('\t').collect();
+            if parts.len() >= 2 {
+                let ahead = parts[0].parse().unwrap_or(0);
+                let behind = parts[1].parse().unwrap_or(0);
+                return (ahead, behind);
+            }
+            (0, 0)
+        }
+        _ => (0, 0),
+    }
 }
 
 /// Get git status for a repo.
@@ -272,15 +326,39 @@ pub fn get_status(repo_path: Option<&str>) -> Result<GitStatus, String> {
         return Err(format!("git status failed: {stderr}"));
     }
 
-    let files = parse_status_porcelain(&status_raw.stdout);
+    let mut files = parse_status_porcelain(&status_raw.stdout);
     let branch = get_branch(&repo_root);
     let head = has_head(&repo_root);
+    let (ahead, behind) = if head { get_ahead_behind(&repo_root) } else { (0, 0) };
+
+    // Merge per-file line stats from numstat
+    if head {
+        let unstaged = Command::new("git")
+            .arg("-C").arg(&repo_root)
+            .args(["diff", "--numstat"])
+            .output();
+        let staged = Command::new("git")
+            .arg("-C").arg(&repo_root)
+            .args(["diff", "--cached", "--numstat"])
+            .output();
+        let unstaged_map = unstaged.ok().filter(|o| o.status.success()).map(|o| parse_numstat(&o.stdout)).unwrap_or_default();
+        let staged_map = staged.ok().filter(|o| o.status.success()).map(|o| parse_numstat(&o.stdout)).unwrap_or_default();
+        for f in &mut files {
+            let map = if f.staged { &staged_map } else { &unstaged_map };
+            if let Some(&(add, del)) = map.get(&f.path) {
+                f.additions = add;
+                f.deletions = del;
+            }
+        }
+    }
 
     Ok(GitStatus {
         repo_root,
         branch,
         has_head: head,
         files,
+        ahead,
+        behind,
     })
 }
 
@@ -709,4 +787,63 @@ pub fn list_submodules(repo_root: &str) -> Vec<SubmoduleInfo> {
     }
 
     submodules
+}
+
+// ─── Remote Management ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: String,
+}
+
+/// List all remotes with their URLs.
+pub fn list_remotes(repo_root: &str) -> Result<Vec<RemoteInfo>, String> {
+    let output = run_git(repo_root, &["remote", "-v"])?;
+    let mut seen = std::collections::HashSet::new();
+    let mut remotes = Vec::new();
+    for line in output.lines() {
+        // Format: "origin  https://... (fetch)" or "origin  https://... (push)"
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let name = parts[0].to_string();
+        // Take the URL part before the (fetch)/(push) suffix
+        let url = parts[1].split_whitespace().next().unwrap_or("").to_string();
+        // Deduplicate: each remote appears twice (fetch + push)
+        if seen.insert(name.clone()) {
+            remotes.push(RemoteInfo { name, url });
+        }
+    }
+    Ok(remotes)
+}
+
+/// Add a new remote.
+pub fn add_remote(repo_root: &str, name: &str, url: &str) -> Result<(), String> {
+    run_git(repo_root, &["remote", "add", name, url])?;
+    Ok(())
+}
+
+/// Remove a remote.
+pub fn remove_remote(repo_root: &str, name: &str) -> Result<(), String> {
+    run_git(repo_root, &["remote", "remove", name])?;
+    Ok(())
+}
+
+// ─── Plugin Setup ──────────────────────────────────────────────────
+
+/// Initialize git plugin: create watcher, auto-watch saved repos.
+pub fn setup(app: &tauri::AppHandle) -> std::sync::Arc<git_watcher::GitWatcherManager> {
+    use tauri::Manager;
+    use std::sync::Arc;
+    let watcher = Arc::new(git_watcher::GitWatcherManager::new(app.clone()));
+    app.manage(watcher.clone());
+    // Auto-watch saved repos
+    let app_settings = crate::settings::load_settings(app.clone()).unwrap_or_default();
+    for repo in &app_settings.saved_repos {
+        let _ = watcher.watch(repo);
+    }
+    watcher
 }

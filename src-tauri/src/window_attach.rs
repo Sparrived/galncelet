@@ -311,7 +311,7 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
                 unsafe { GetWindowThreadProcessId(fg, Some(&mut pid)); }
                 pid
             });
-            if crate::page_url::is_browser(&process) {
+            if crate::page_notes::page_url::is_browser(&process) {
                 static LAST_URL_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -320,7 +320,7 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
                 let last = LAST_URL_READ.load(std::sync::atomic::Ordering::Relaxed);
                 if now.saturating_sub(last) >= 500 {
                     LAST_URL_READ.store(now, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(url) = crate::page_url::read_browser_url(fg.0 as isize) {
+                    if let Some(url) = crate::page_notes::page_url::read_browser_url(fg.0 as isize) {
                         *state.current_url.lock().unwrap() = url;
                     }
                 }

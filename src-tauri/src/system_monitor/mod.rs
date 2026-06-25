@@ -276,3 +276,13 @@ impl SystemMonitorState {
 pub fn fetch_system_metrics(state: tauri::State<'_, std::sync::Arc<SystemMonitorState>>) -> SystemMetrics {
     state.get_metrics()
 }
+
+// ─── Plugin Setup ──────────────────────────────────────────────────
+
+/// Initialize system monitor plugin.
+pub fn setup(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    use std::sync::Arc;
+    let state = Arc::new(SystemMonitorState::new());
+    app.manage(state);
+}

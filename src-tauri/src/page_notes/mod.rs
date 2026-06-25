@@ -1,3 +1,5 @@
+pub mod page_url;
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -248,4 +250,16 @@ pub async fn start_ws_server(app_handle: tauri::AppHandle) -> Result<(), String>
     });
 
     Ok(())
+}
+
+// ─── Plugin Setup ──────────────────────────────────────────────────
+
+/// Initialize page-notes plugin: start WebSocket server.
+pub fn setup(app: &tauri::AppHandle) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = start_ws_server(app_handle).await {
+            eprintln!("[page-notes] Failed to start WebSocket server: {}", e);
+        }
+    });
 }

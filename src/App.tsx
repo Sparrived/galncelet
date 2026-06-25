@@ -19,16 +19,11 @@ function getWidgetType(): string {
 export default function App() {
   const widgetType = getWidgetType();
 
-  const [repoRoot, setRepoRoot] = useState<string | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
   const refresh = useCallback(async () => {}, []);
   const showResult = useCallback((msg: string) => { console.log("[result]", msg); }, []);
   const showError = useCallback((msg: string) => { console.error("[error]", msg); }, []);
-  const onStatusChange = useCallback((root: string | null, b: string | null) => {
-    setRepoRoot(root);
-    setBranch(b);
-  }, []);
+  const onStatusChange = useCallback((_status: string | null) => {}, []);
 
   // Dynamic plugin loading on mount
   useEffect(() => {
@@ -50,8 +45,8 @@ export default function App() {
 
   // Memoize context value — only changes when data actually changes
   const contextValue = useMemo(
-    () => ({ repoRoot, branch, refresh, showResult, showError, onStatusChange }),
-    [repoRoot, branch, refresh, showResult, showError, onStatusChange],
+    () => ({ refresh, showResult, showError, onStatusChange }),
+    [refresh, showResult, showError, onStatusChange],
   );
 
   // Wait for plugins to load
@@ -75,13 +70,11 @@ export default function App() {
 
   const Component = plugin.component;
 
-  const widgetTitle = plugin.title;
-
   return (
     <WidgetProvider value={contextValue}>
       <div className="app">
         <WidgetShell
-          title={widgetTitle}
+          title={plugin.title}
           showCloseButton={plugin.showCloseButton}
           showCollapseButton={plugin.showCollapseButton}
           showAttachButton={plugin.showAttachButton}

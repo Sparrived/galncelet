@@ -378,3 +378,21 @@ pub async fn stop_amkr_ws(
     }
     Ok(())
 }
+
+// ─── Plugin Setup ──────────────────────────────────────────────────
+
+/// Initialize AMKR plugin: create WebSocket handle, start event client.
+pub fn setup(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    let ws_handle: AmkrWsHandle = Arc::new(Mutex::new(None));
+    app.manage(ws_handle.clone());
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let ws = app_handle.state::<AmkrWsHandle>();
+        if let Err(e) = start_amkr_ws(app_handle.clone(), ws).await {
+            eprintln!("[amkr] Failed to start WebSocket client: {}", e);
+        }
+    });
+}

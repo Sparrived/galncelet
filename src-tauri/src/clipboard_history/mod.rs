@@ -121,3 +121,14 @@ pub fn delete_clipboard_entry(state: tauri::State<'_, Arc<ClipboardHistoryState>
 pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardHistoryState>>) {
     state.clear();
 }
+
+// ─── Plugin Setup ──────────────────────────────────────────────────
+
+/// Initialize clipboard history plugin: create state, start monitor.
+pub fn setup(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    use std::sync::Arc;
+    let state = Arc::new(ClipboardHistoryState::new());
+    app.manage(state.clone());
+    start_monitor(state);
+}

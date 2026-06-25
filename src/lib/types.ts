@@ -19,6 +19,8 @@ export interface AppSettings {
   pullRebase: boolean;
   /** Saved repository paths */
   savedRepos: string[];
+  /** Last active repository path (persisted across sessions) */
+  currentRepo?: string;
   /** Panel visibility keyed by panel id. Missing key = visible. */
   panelVisibility: Record<string, boolean>;
   /** Per-window persisted state */

@@ -1,0 +1,254 @@
+# Plugin Scaffold Template
+
+> Exact file structure and boilerplate for creating a new plugin. Copy and replace `my-plugin` / `MyPlugin` with actual names.
+
+## File Structure
+
+```
+src/addons/my-plugin/
+├── index.tsx              # Entry point — registerPlugin() side-effect
+├── manifest.json          # Plugin metadata
+├── types.ts               # TypeScript interfaces for IPC data
+├── api.ts                 # Tauri invoke() wrappers
+├── MyPluginPanel.tsx      # Main panel component
+├── styles.css             # Scoped styles (prefix: .mp-)
+└── components/            # Optional sub-components
+    └── SomeWidget.tsx
+
+src-tauri/src/
+├── main.rs                # Add #[tauri::command] to generate_handler![]
+└── my_plugin.rs           # New Rust module with Tauri commands
+```
+
+## manifest.json
+
+```json
+{
+  "id": "my-plugin",
+  "title": "My Plugin",
+  "description": "Short description for management page",
+  "icon": "🔧",
+  "defaultWidth": 360,
+  "defaultHeight": 200,
+  "showCloseButton": true,
+  "showCollapseButton": true,
+  "showAttachButton": false,
+  "defaultAttachEnabled": false,
+  "defaultWhitelist": []
+}
+```
+
+## index.tsx
+
+```tsx
+import { registerPlugin } from "../registry";
+import MyPluginPanel from "./MyPluginPanel";
+import manifest from "./manifest.json";
+import "./styles.css";
+
+registerPlugin({
+  ...manifest,
+  component: MyPluginPanel,
+});
+```
+
+## types.ts
+
+```ts
+export interface MyData {
+  id: string;
+  name: string;
+  value: number;
+}
+```
+
+## api.ts
+
+```ts
+import { invoke } from "@tauri-apps/api/core";
+import type { MyData } from "./types";
+
+export async function fetchMyData(): Promise<MyData[]> {
+  return invoke<MyData[]>("fetch_my_data");
+}
+
+export async function doAction(id: string): Promise<void> {
+  return invoke<void>("do_action", { id });
+}
+```
+
+## MyPluginPanel.tsx (minimal — polling pattern)
+
+```tsx
+import { useEffect, useState, useRef } from "react";
+import { fetchMyData } from "./api";
+import type { MyData } from "./types";
+import { useAutoResize } from "../../widgets/useAutoResize";
+
+export default function MyPluginPanel() {
+  const [data, setData] = useState<MyData[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useAutoResize(containerRef);
+
+  useEffect(() => {
+    fetchMyData().then(setData).catch(() => {});
+    const interval = setInterval(() => {
+      fetchMyData().then(setData).catch(() => {});
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="mp-panel" ref={containerRef}>
+      {data.length === 0 ? (
+        <div className="dashboard-empty">暂无数据</div>
+      ) : (
+        data.map((item) => (
+          <div key={item.id} className="mp-item">
+            <span>{item.name}</span>
+            <span>{item.value}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+```
+
+## MyPluginPanel.tsx (with useWidget + context menu)
+
+```tsx
+import { useEffect, useState, useRef, useCallback } from "react";
+import { fetchMyData } from "./api";
+import type { MyData } from "./types";
+import { useAutoResize } from "../../widgets/useAutoResize";
+import { useWidget } from "../../lib/context";
+import { useWidgetContextMenu } from "../../widgets/WidgetContext";
+
+export default function MyPluginPanel() {
+  const [data, setData] = useState<MyData[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useAutoResize(containerRef);
+
+  const { showResult, showError, onStatusChange } = useWidget();
+
+  const refresh = useCallback(async () => {
+    try {
+      const d = await fetchMyData();
+      setData(d);
+      onStatusChange(`${d.length} items`);
+    } catch (e) {
+      showError(String(e));
+    }
+  }, [onStatusChange, showError]);
+
+  useWidgetContextMenu([
+    { label: "刷新", icon: "🔄", onClick: () => refresh() },
+  ]);
+
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, 2000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  return (
+    <div className="mp-panel" ref={containerRef}>
+      {/* ... */}
+    </div>
+  );
+}
+```
+
+## MyPluginPanel.tsx (with Tauri event listener)
+
+```tsx
+import { useEffect, useState, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useAutoResize } from "../../widgets/useAutoResize";
+
+export default function MyPluginPanel() {
+  const [data, setData] = useState<string>("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  useAutoResize(containerRef);
+
+  useEffect(() => {
+    const unlisten = listen<{ message: string }>("my-plugin-event", (event) => {
+      setData(event.payload.message);
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  return (
+    <div className="mp-panel" ref={containerRef}>
+      <div>{data || "等待事件…"}</div>
+    </div>
+  );
+}
+```
+
+## styles.css
+
+```css
+.mp-panel {
+  padding: 8px 10px;
+}
+
+.mp-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+```
+
+## Rust Backend — my_plugin.rs
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MyData {
+    pub id: String,
+    pub name: String,
+    pub value: f64,
+}
+
+#[tauri::command]
+pub async fn fetch_my_data() -> Result<Vec<MyData>, String> {
+    // Implementation here
+    Ok(vec![])
+}
+
+#[tauri::command]
+pub async fn do_action(id: String) -> Result<(), String> {
+    // Implementation here
+    Ok(())
+}
+```
+
+## Rust Backend — main.rs registration
+
+```rust
+// 1. Add module declaration at top of main.rs:
+mod my_plugin;
+
+// 2. Add commands to generate_handler![]:
+.invoke_handler(tauri::generate_handler![
+    // ... existing commands ...
+    my_plugin::fetch_my_data,
+    my_plugin::do_action,
+])
+```
+
+## Event Emitting (Rust side)
+
+```rust
+use tauri::Emitter;
+
+// Inside a command or event handler:
+app.emit("my-plugin-event", serde_json::json!({ "message": "hello" }))
+    .map_err(|e| e.to_string())?;
+```

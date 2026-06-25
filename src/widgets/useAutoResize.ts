@@ -54,22 +54,14 @@ export function useAutoResize(
     const h = Math.max(maxHeight, el.scrollHeight);
 
     const total = Math.max(h, 60) + HEADER_H;
-    console.log("[useAutoResize] measured height:", h, "scrollHeight:", el.scrollHeight, "total:", total);
 
     if (Math.abs(total - lastHeightRef.current) < 4) return;
     lastHeightRef.current = total;
 
-    console.log("[useAutoResize] setSize:", cardWidthRef.current, total);
     const win = getCurrentWindow();
-    console.log("[useAutoResize] window label:", win.label);
-    const scale = window.devicePixelRatio || 1;
-    const physicalW = Math.round(cardWidthRef.current * scale);
-    const physicalH = Math.round(total * scale);
-    console.log("[useAutoResize] scale:", scale, "physical:", physicalW, physicalH);
     win
       .setSize(new LogicalSize(cardWidthRef.current, total))
-      .then(() => console.log("[useAutoResize] setSize SUCCESS"))
-      .catch((e) => console.error("[useAutoResize] setSize FAILED:", e));
+      .catch(() => {});
   }, [collapsed, containerRef]);
 
   // Observe content changes
