@@ -35,6 +35,7 @@ export function WidgetShell({
   const [collapsed, setCollapsed] = useState(false);
   const [attachEnabled, setAttachEnabledState] = useState(defaultAttachEnabled);
   const [attachRemember, setAttachRememberState] = useState(defaultAttachRemember);
+  const [isInSequence, setIsInSequence] = useState(false);
   const win = getCurrentWindow();
   const winLabel = win.label;
   const pluginId = winLabel.replace("widget-", "");
@@ -93,6 +94,9 @@ export function WidgetShell({
     initialized.current = true;
 
     loadSettings().then((s) => {
+      if (s.widgetSequence && s.widgetSequence.includes(pluginId)) {
+        setIsInSequence(true);
+      }
       const ws = s.windowStates[pluginId];
       if (ws) {
         if (ws.x != null && ws.y != null) {
@@ -180,6 +184,7 @@ export function WidgetShell({
   }, [attachRemember, winLabel, saveState]);
 
   const handleClose = useCallback(async () => {
+    if (isInSequence) return;
     try {
       if (onClose) await onClose();
       const w = Math.round((window.screen.width - 360) / 2);
@@ -189,7 +194,7 @@ export function WidgetShell({
       await win.hide();
       setPluginVisible(pluginId, false).catch(() => {});
     } catch {}
-  }, [win, winLabel, onClose, pluginId]);
+  }, [win, winLabel, onClose, pluginId, isInSequence]);
 
 
   // ─── Context Menu ───
@@ -219,9 +224,9 @@ export function WidgetShell({
     return () => document.removeEventListener("mousedown", handler);
   }, [menuPos, closeMenu]);
 
-  const defaultMenuItems: ContextMenuItem[] = [
-    { label: "关闭挂件", icon: "✕", onClick: handleClose, danger: true },
-  ];
+  const defaultMenuItems: ContextMenuItem[] = isInSequence
+    ? []
+    : [{ label: "关闭挂件", icon: "✕", onClick: handleClose, danger: true }];
   const allMenuItems = [...pluginMenuItems, ...defaultMenuItems];
 
   const contextValue = useMemo(() => ({ collapsed, contextMenuItems: pluginMenuItems, registerContextMenuItems }), [collapsed, pluginMenuItems, registerContextMenuItems]);
@@ -242,7 +247,7 @@ export function WidgetShell({
             {showCollapseButton && (
               <CollapseButton collapsed={collapsed} onClick={toggleCollapse} />
             )}
-            {showCloseButton && (
+            {showCloseButton && !isInSequence && (
               <CloseButton onClick={handleClose} />
             )}
           </div>

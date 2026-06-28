@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+      draft:
+        description: "Create the GitHub Release as a draft"
+        required: false
+        default: true
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Build Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+          }
+          if (-not $tag.StartsWith("v")) {
+            throw "Release tag must start with 'v'. Received '$tag'."
+          }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Use repository tag for manual releases
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          git checkout "${{ steps.release.outputs.tag }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Remove local MSVC linker override
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath "src-tauri/.cargo/config.toml" -Force -ErrorAction SilentlyContinue
+
+      - name: Build, verify, and publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $params = @{
+            Tag = "${{ steps.release.outputs.tag }}"
+            Target = "x86_64-pc-windows-msvc"
+            AllowDirty = $true
+            Publish = $true
+          }
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $params.Draft = [System.Convert]::ToBoolean("${{ inputs.draft }}")
+            $params.Prerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+          }
+          .\scripts\release.ps1 @params

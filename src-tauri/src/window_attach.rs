@@ -33,6 +33,8 @@ pub struct AttachState {
     pub attach_remember: Arc<Mutex<HashMap<String, bool>>>,
     /// Current browser URL (shared with frontend)
     pub current_url: Arc<Mutex<String>>,
+    /// Widget labels that are part of the sequence — attach loop must not hide them.
+    pub sequence_labels: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 
@@ -46,6 +48,7 @@ impl AttachState {
             attach_whitelist: Arc::new(Mutex::new(HashMap::new())),
             attach_remember: Arc::new(Mutex::new(HashMap::new())),
             current_url: Arc::new(Mutex::new(String::new())),
+            sequence_labels: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 }
@@ -67,7 +70,7 @@ fn get_process_name(pid: u32) -> String {
 }
 
 fn matches_whitelist(process: &str, whitelist: &[String]) -> bool {
-    if whitelist.is_empty() { return false; }
+    if whitelist.is_empty() { return true; }
     let p = process.to_lowercase();
     whitelist.iter().any(|w| p.contains(&w.to_lowercase()))
 }
@@ -79,10 +82,37 @@ fn is_own_window(hwnd: HWND) -> bool {
     pid == unsafe { GetCurrentProcessId() }
 }
 
+/// Cached state per widget to avoid redundant IPC calls.
+struct WidgetCache {
+    visible: bool,
+    x: i32,
+    y: i32,
+}
+
 /// Reposition all enabled, non-collapsed widgets next to the given window.
 /// Widgets with attach_enabled = false are not affected by this logic.
+/// Uses state caching to avoid redundant Tauri IPC calls.
+/// `throttle_position`: when true (dirty-only, no fg change), skip set_position if called recently.
 #[cfg(target_os = "windows")]
-fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &AttachState) {
+fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &AttachState, throttle_position: bool) {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static WIDGET_CACHE: std::sync::OnceLock<Mutex<HashMap<String, WidgetCache>>> = std::sync::OnceLock::new();
+    let cache = WIDGET_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    static LAST_POS_UPDATE: std::sync::OnceLock<Mutex<std::time::Instant>> = std::sync::OnceLock::new();
+    let last_pos = LAST_POS_UPDATE.get_or_init(|| Mutex::new(std::time::Instant::now()));
+    const POS_COOLDOWN: Duration = Duration::from_millis(100);
+
+    let now = std::time::Instant::now();
+    let should_update_pos = if throttle_position {
+        let elapsed = last_pos.lock().unwrap().elapsed();
+        elapsed >= POS_COOLDOWN
+    } else {
+        true
+    };
+
     let cw = *state.card_width.lock().unwrap();
     let collapsed = state.collapsed_height.lock().unwrap().clone();
     let enabled = state.attach_enabled.lock().unwrap().clone();
@@ -91,38 +121,13 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
 
     // Derive widget labels dynamically from registered attach state
     let labels: Vec<String> = enabled.keys().cloned().collect();
-    // Debug: check which windows actually exist
-    static WIN_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-    if WIN_CHECK.swap(false, std::sync::atomic::Ordering::Relaxed) {
-        for label in &labels {
-            let exists = app_handle.get_webview_window(label).is_some();
-            println!("[attach] window {} exists={}", label, exists);
-        }
-    }
 
     // Get process name of target
     let mut pid: u32 = 0;
     unsafe { GetWindowThreadProcessId(target, Some(&mut pid)); }
     let process = get_process_name(pid);
 
-    // Check which attach-enabled widgets should be visible
-    let any_visible = labels.iter().any(|label| {
-        if collapsed.contains_key(label.as_str()) { return false; }
-        if enabled.get(label).copied() == Some(false) { return false; }
-        let wl = whitelist.get(label).map(|v| v.as_slice()).unwrap_or(&[]);
-        matches_whitelist(&process, wl)
-    });
-
-    if !any_visible {
-        for label in &labels {
-            if collapsed.contains_key(label.as_str()) { continue; }
-            if enabled.get(label).copied() == Some(false) { continue; }
-            if let Some(win) = app_handle.get_webview_window(label) {
-                let _ = win.hide();
-            }
-        }
-        return;
-    }
+    let seq_labels = state.sequence_labels.lock().unwrap().clone();
 
     let mut target_rect = RECT::default();
     if unsafe { GetWindowRect(target, &mut target_rect) }.is_err() { return; }
@@ -147,28 +152,47 @@ fn reposition_widgets(app_handle: &tauri::AppHandle, target: HWND, state: &Attac
     };
     let card_y = target_rect.top.max(mi.rcWork.top);
 
+    let mut c = cache.lock().unwrap();
     let mut y_offset: i32 = 0;
     for label in &labels {
+        if seq_labels.contains(label.as_str()) { continue; }
         if collapsed.contains_key(label.as_str()) { continue; }
         if enabled.get(label).copied() == Some(false) { continue; }
         let wl = whitelist.get(label).map(|v| v.as_slice()).unwrap_or(&[]);
         if !matches_whitelist(&process, wl) {
-            if let Some(win) = app_handle.get_webview_window(label) {
-                let _ = win.hide();
+            let was_visible = c.get(label).map(|e| e.visible).unwrap_or(true);
+            if was_visible {
+                if let Some(win) = app_handle.get_webview_window(label) {
+                    println!("[attach] hiding {} (whitelist mismatch, process={})", label, process);
+                    let _ = win.hide();
+                }
+                c.insert(label.clone(), WidgetCache { visible: false, x: 0, y: 0 });
             }
             continue;
         }
 
         if let Some(win) = app_handle.get_webview_window(label) {
-            let _ = win.show();
-            println!("[attach] showing {}", label);
+            let cached = c.get(label);
+            let was_visible = cached.map(|e| e.visible).unwrap_or(false);
+            if !was_visible {
+                let _ = win.show();
+                println!("[attach] showing {}", label);
+            }
             // "remember" mode: skip repositioning, user has positioned this widget
             if remember.get(label).copied() == Some(true) {
+                c.insert(label.clone(), WidgetCache { visible: true, x: 0, y: 0 });
                 continue;
             }
-            let _ = win.set_position(tauri::Position::Physical(
-                tauri::PhysicalPosition { x: card_x, y: card_y + y_offset },
-            ));
+            let new_x = card_x;
+            let new_y = card_y + y_offset;
+            let pos_changed = cached.map(|e| e.x != new_x || e.y != new_y).unwrap_or(true);
+            if pos_changed && should_update_pos {
+                let _ = win.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition { x: new_x, y: new_y },
+                ));
+                *last_pos.lock().unwrap() = now;
+            }
+            c.insert(label.clone(), WidgetCache { visible: true, x: new_x, y: new_y });
             if let Ok(size) = win.outer_size() {
                 y_offset += size.height as i32;
             }
@@ -301,7 +325,7 @@ pub fn start_attach_loop(app_handle: tauri::AppHandle, state: Arc<AttachState>) 
             if dirty || fg_changed {
                 last_fg = fg.0 as isize;
                 if !is_own_window(fg) {
-                    reposition_widgets(&app_handle, fg, &state);
+                    reposition_widgets(&app_handle, fg, &state, dirty && !fg_changed);
                 }
             }
 

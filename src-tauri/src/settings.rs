@@ -73,11 +73,11 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// Ensure all known plugins have a visibility entry (defaulting to visible).
+    /// Ensure all known plugins have a visibility entry (defaulting to hidden).
     /// This fills in missing plugin IDs from manifests without overwriting existing values.
     pub fn ensure_plugin_visibility(&mut self, manifests: &[crate::plugins::PluginManifest]) {
         for m in manifests {
-            self.panel_visibility.entry(m.id.clone()).or_insert(true);
+            self.panel_visibility.entry(m.id.clone()).or_insert(false);
         }
     }
 }
@@ -164,7 +164,7 @@ pub fn set_plugin_hotkey(
 }
 
 /// Tauri command: set the widget sequence order.
-/// Only hides/shows windows — does NOT change panel_visibility (plugins stay enabled).
+/// Only hides/shows windows and does not change panel_visibility.
 #[tauri::command]
 pub fn set_widget_sequence(
     app: tauri::AppHandle,
@@ -172,7 +172,16 @@ pub fn set_widget_sequence(
 ) -> Result<(), String> {
     let mut settings = load_settings(app.clone())?;
     settings.widget_sequence = sequence.clone();
-    save_settings(app.clone(), settings)?;
+    save_settings(app.clone(), settings.clone())?;
+
+    // Sync sequence labels with attach state so the attach loop skips them
+    if let Some(state) = app.try_state::<std::sync::Arc<crate::window_attach::AttachState>>() {
+        let mut sl = state.sequence_labels.lock().unwrap();
+        sl.clear();
+        for pid in &sequence {
+            sl.insert(format!("widget-{}", pid));
+        }
+    }
 
     // Hide all sequence windows except the first one
     SEQUENCE_INDEX.store(0, Ordering::Relaxed);
@@ -186,6 +195,8 @@ pub fn set_widget_sequence(
             }
         }
     }
+    unregister_all_hotkeys(&app);
+    register_all_hotkeys(&app, &settings);
     Ok(())
 }
 
@@ -360,8 +371,6 @@ fn cycle_sequence(app: &tauri::AppHandle) {
     // Advance index
     let next_idx = (safe_idx + 1) % seq.len();
     SEQUENCE_INDEX.store(next_idx, Ordering::Relaxed);
-    let next_id = &seq[next_idx];
-    let next_label = format!("widget-{}", next_id);
 
     // Show next widget at the same position; skip if window doesn't exist
     let mut tried = 0;

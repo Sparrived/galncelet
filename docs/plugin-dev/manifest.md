@@ -2,6 +2,8 @@
 
 每个插件目录下必须包含一个 `manifest.json` 文件，用于声明插件的元数据和窗口行为配置。该文件会在 `index.tsx` 中通过 `import manifest from "./manifest.json"` 导入，并展开传入 `registerPlugin()`。
 
+同时，`build.rs` 会在编译时自动扫描 `src/addons/*/manifest.json` 并将其内容嵌入到 Rust 编译产物中，供后端 `plugins::load_manifests()` 读取。
+
 ## 字段一览
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
@@ -12,6 +14,7 @@
 | `icon` | `string` | ❌ | `undefined` | 管理页面显示的 Emoji 图标 |
 | `defaultWidth` | `number` | ❌ | `undefined` | 默认窗口宽度（逻辑像素） |
 | `defaultHeight` | `number` | ❌ | `undefined` | 默认窗口高度（逻辑像素） |
+| `collapsedHeight` | `number` | ❌ | `undefined` | 折叠后高度（逻辑像素）。0 = 完全隐藏 |
 | `showCloseButton` | `boolean` | ❌ | `true` | 标题栏是否显示关闭按钮 |
 | `showCollapseButton` | `boolean` | ❌ | `true` | 标题栏是否显示折叠按钮 |
 | `showAttachButton` | `boolean` | ❌ | `true` | 标题栏是否显示「附着到前台窗口」按钮 |
@@ -27,6 +30,7 @@
 - 作为 `AppSettings.windowStates` 和 `panelVisibility` 的键
 - Tauri 窗口标签格式为 `widget-<id>`
 - 管理页面通过此 ID 引用插件
+- Rust 侧插件目录名（`src-tauri/src/<id>/`）
 
 **命名规范**：使用 kebab-case，如 `system-monitor`、`clipboard-history`。
 
@@ -44,6 +48,10 @@
 - `defaultWidth` 通常会被全局设置 `AppSettings.cardWidth`（默认 360px）覆盖
 - `defaultHeight` 作为窗口创建时的初始高度
 - 如果使用 `useAutoResize` hook，窗口高度会随内容自动调整
+
+### `collapsedHeight`
+
+折叠后窗口的高度。如果不设置，折叠时使用默认高度（标题栏 36px）。设置为 0 可以完全隐藏窗口内容区域。
 
 ### 按钮控制
 
@@ -139,3 +147,38 @@
   "defaultWhitelist": []
 }
 ```
+
+## 与 PluginDef 的映射关系
+
+`manifest.json` 的字段会直接展开传入 `registerPlugin()`：
+
+```ts
+// index.tsx 中的实际调用
+registerPlugin({
+  ...manifest,           // 来自 manifest.json 的所有字段
+  component: MyPanel,    // 额外添加的 React 组件
+});
+```
+
+对应的 `PluginDef` 接口（`src/addons/registry.ts`）：
+
+```ts
+interface PluginDef {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  collapsedHeight?: number;
+  defaultWidth?: number;
+  defaultHeight?: number;
+  showCloseButton?: boolean;
+  showCollapseButton?: boolean;
+  showAttachButton?: boolean;
+  defaultAttachEnabled?: boolean;
+  defaultAttachRemember?: boolean;
+  defaultWhitelist?: string[];
+  component: FC;
+}
+```
+
+> **注意**：`collapsedHeight` 在 `PluginDef` 中定义，但在当前 `WidgetShell` 实现中尚未使用（折叠时固定使用标题栏高度 36px）。保留为未来扩展的预留字段。

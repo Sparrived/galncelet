@@ -64,7 +64,7 @@ export default function ManagePage() {
 
   const togglePlugin = async (plugin: PluginDef) => {
     const vis = { ...settings.panelVisibility };
-    const enabling = vis[plugin.id] === false;
+    const enabling = vis[plugin.id] !== true;
     vis[plugin.id] = enabling;
     await updateSettings({ panelVisibility: vis });
     if (enabling) {
@@ -82,6 +82,11 @@ export default function ManagePage() {
   };
 
   const openPlugin = async (plugin: PluginDef) => {
+    if (settings.panelVisibility[plugin.id] !== true) {
+      await updateSettings({
+        panelVisibility: { ...settings.panelVisibility, [plugin.id]: true },
+      });
+    }
     await createPluginWindow(
       plugin.id, plugin.title,
       plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
@@ -145,6 +150,20 @@ export default function ManagePage() {
     heldKeysRef.current.clear();
     pendingPartsRef.current = [];
 
+    const modifierNames = new Set(["Ctrl", "Shift", "Alt", "Super"]);
+    const buildParts = () => {
+      const modifiers: string[] = [];
+      const keys: string[] = [];
+      for (const k of heldKeysRef.current) {
+        const name = codeToName(k);
+        if (KEY_NAMES[k]) modifiers.push(name);
+        else keys.push(name);
+      }
+      return [...modifiers, ...keys];
+    };
+    const isValidHotkey = (parts: string[]) =>
+      parts.some((p) => modifierNames.has(p)) && parts.some((p) => !modifierNames.has(p));
+
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -152,7 +171,7 @@ export default function ManagePage() {
       // Enter confirms (not part of the combo)
       if (e.code === "Enter") {
         cleanup();
-        if (pendingPartsRef.current.length >= 2) {
+        if (isValidHotkey(pendingPartsRef.current)) {
           onConfirm(pendingPartsRef.current.join("+"));
         } else {
           onCancel();
@@ -168,32 +187,25 @@ export default function ManagePage() {
 
       heldKeysRef.current.add(e.code);
 
-      // Build display: modifiers first, then non-modifier keys
-      const modifiers: string[] = [];
-      const keys: string[] = [];
-      for (const k of heldKeysRef.current) {
-        const name = codeToName(k);
-        if (KEY_NAMES[k]) modifiers.push(name);
-        else keys.push(name);
+      const parts = buildParts();
+      if (isValidHotkey(parts)) {
+        pendingPartsRef.current = parts;
       }
-      pendingPartsRef.current = [...modifiers, ...keys];
-      onDisplay(pendingPartsRef.current.join(" + "));
+      onDisplay(parts.join(" + "));
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       heldKeysRef.current.delete(e.code);
-      // Rebuild display from remaining held keys
-      const modifiers: string[] = [];
-      const keys: string[] = [];
-      for (const k of heldKeysRef.current) {
-        const name = codeToName(k);
-        if (KEY_NAMES[k]) modifiers.push(name);
-        else keys.push(name);
+
+      const parts = buildParts();
+      if (isValidHotkey(parts)) {
+        pendingPartsRef.current = parts;
+        onDisplay(parts.join(" + "));
+      } else {
+        onDisplay(pendingPartsRef.current.join(" + "));
       }
-      pendingPartsRef.current = [...modifiers, ...keys];
-      onDisplay(pendingPartsRef.current.join(" + "));
     };
 
     const cleanup = () => {
@@ -237,8 +249,7 @@ export default function ManagePage() {
   const applySequence = async (newSeq: string[]) => {
     await ensureSequenceWindows(newSeq);
     await setWidgetSequence(newSeq);
-    await saveSettings({ ...settings, widgetSequence: newSeq });
-    setSettings({ ...settings, widgetSequence: newSeq });
+    setSettings((prev) => ({ ...prev, widgetSequence: newSeq }));
   };
 
   const addToSequence = async (pluginId: string) => {
@@ -262,7 +273,7 @@ export default function ManagePage() {
 
   const saveSequenceHotkey = async (hotkey: string | null) => {
     await setSequenceHotkey(hotkey);
-    setSettings({ ...settings, sequenceHotkey: hotkey });
+    setSettings((prev) => ({ ...prev, sequenceHotkey: hotkey }));
   };
 
   const availableForSequence = plugins.filter((p) => !seq.includes(p.id));
@@ -383,7 +394,7 @@ export default function ManagePage() {
       <div className="manage-content">
         <div className="manage-list">
           {plugins.map((p) => {
-            const enabled = settings.panelVisibility[p.id] !== false;
+            const enabled = settings.panelVisibility[p.id] === true;
             return (
               <div key={p.id} className={`manage-item ${enabled ? "" : "manage-item-disabled"}`}>
                 <div className="manage-item-info">

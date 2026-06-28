@@ -1,6 +1,6 @@
 # 快速开始：从零创建一个插件
 
-本教程将引导你创建一个完整的 Galncelet 插件——**番茄钟计时器**。通过这个实例，你将了解插件开发的完整流程。
+本教程将引导你创建一个完整的 Galncelet 插件——**番茄钟计时器**。通过这个实例，你将了解插件开发的完整流程，包括前端和后端。
 
 ## 最终效果
 
@@ -12,146 +12,51 @@
 ## 步骤总览
 
 ```
-1. 创建 Rust 后端命令
-2. 注册命令到 main.rs
-3. 创建前端 types.ts
-4. 创建前端 api.ts
-5. 创建 manifest.json
-6. 创建 Panel 组件
-7. 创建 styles.css
-8. 创建 index.tsx 入口
-9. 构建运行
+前端部分：
+  1. 创建 manifest.json
+  2. 创建 types.ts
+  3. 创建 api.ts
+  4. 创建 Panel 组件
+  5. 创建 styles.css
+  6. 创建 index.tsx 入口
+
+后端部分（需要 Rust 命令时）：
+  7. 创建 src-tauri/src/pomodoro/mod.rs
+  8. 在 main.rs 的 generate_handler![] 中注册命令
+
+构建运行：
+  9. npm run tauri dev
 ```
 
 ---
 
-## 步骤 1：创建 Rust 后端命令
+## 步骤 1：创建 manifest.json
 
-创建 `src-tauri/src/pomodoro.rs`：
+创建 `src/addons/pomodoro/manifest.json`：
 
-```rust
-use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use tauri::{Emitter, State};
-
-/// 计时器状态（由 Tauri 管理）
-pub struct PomodoroState {
-    pub remaining: Mutex<u32>,
-    pub running: Mutex<bool>,
-}
-
-impl PomodoroState {
-    pub fn new() -> Self {
-        Self {
-            remaining: Mutex::new(25 * 60),
-            running: Mutex::new(false),
-        }
-    }
-}
-
-/// 返回给前端的状态
-#[derive(Serialize, Clone)]
-pub struct PomodoroStatus {
-    pub remaining: u32,
-    pub running: bool,
-}
-
-#[tauri::command]
-pub fn get_pomodoro_status(state: State<PomodoroState>) -> PomodoroStatus {
-    PomodoroStatus {
-        remaining: *state.remaining.lock().unwrap(),
-        running: *state.running.lock().unwrap(),
-    }
-}
-
-#[tauri::command]
-pub fn start_pomodoro(app: tauri::AppHandle, state: State<PomodoroState>) -> Result<(), String> {
-    {
-        let mut running = state.running.lock().unwrap();
-        if *running {
-            return Ok(());
-        }
-        *running = true;
-    }
-
-    let app_clone = app.clone();
-    let state_ref = app.state::<PomodoroState>();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-            let mut remaining = state_ref.remaining.lock().unwrap();
-            let running = state_ref.running.lock().unwrap();
-
-            if !*running || *remaining == 0 {
-                break;
-            }
-
-            *remaining -= 1;
-            let r = *remaining;
-
-            drop(remaining);
-            drop(running);
-
-            let _ = app_clone.emit("pomodoro-tick", PomodoroStatus {
-                remaining: r,
-                running: true,
-            });
-
-            if r == 0 {
-                let _ = app_clone.emit("pomodoro-complete", ());
-                break;
-            }
-        }
-
-        *state_ref.running.lock().unwrap() = false;
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn pause_pomodoro(state: State<PomodoroState>) {
-    *state.running.lock().unwrap() = false;
-}
-
-#[tauri::command]
-pub fn reset_pomodoro(state: State<PomodoroState>) {
-    *state.remaining.lock().unwrap() = 25 * 60;
-    *state.running.lock().unwrap() = false;
+```json
+{
+  "id": "pomodoro",
+  "title": "番茄钟",
+  "description": "25 分钟番茄工作法计时器",
+  "icon": "🍅",
+  "defaultWidth": 240,
+  "defaultHeight": 180,
+  "showCloseButton": true,
+  "showCollapseButton": true,
+  "showAttachButton": false,
+  "defaultAttachEnabled": false,
+  "defaultWhitelist": []
 }
 ```
 
----
+这是一个独立工具，不需要附着到其他窗口，所以 `showAttachButton` 和 `defaultAttachEnabled` 都设为 `false`。
 
-## 步骤 2：注册命令到 main.rs
-
-编辑 `src-tauri/src/main.rs`：
-
-```rust
-// 1. 在文件顶部添加模块声明
-mod pomodoro;
-
-fn main() {
-    tauri::Builder::default()
-        // 2. 注册状态
-        .manage(pomodoro::PomodoroState::new())
-        // 3. 在 invoke_handler 中添加命令
-        .invoke_handler(tauri::generate_handler![
-            // ... 已有命令 ...
-            pomodoro::get_pomodoro_status,
-            pomodoro::start_pomodoro,
-            pomodoro::pause_pomodoro,
-            pomodoro::reset_pomodoro,
-        ])
-        // ...
-}
-```
+> **注意**：`manifest.json` 会被 `build.rs` 自动嵌入编译产物，前端通过 `import manifest from "./manifest.json"` 导入。
 
 ---
 
-## 步骤 3：创建前端类型
+## 步骤 2：创建前端类型
 
 创建 `src/addons/pomodoro/types.ts`：
 
@@ -164,7 +69,7 @@ export interface PomodoroStatus {
 
 ---
 
-## 步骤 4：创建前端 API
+## 步骤 3：创建前端 API
 
 创建 `src/addons/pomodoro/api.ts`：
 
@@ -191,31 +96,7 @@ export async function resetPomodoro(): Promise<void> {
 
 ---
 
-## 步骤 5：创建 manifest.json
-
-创建 `src/addons/pomodoro/manifest.json`：
-
-```json
-{
-  "id": "pomodoro",
-  "title": "番茄钟",
-  "description": "25 分钟番茄工作法计时器",
-  "icon": "🍅",
-  "defaultWidth": 240,
-  "defaultHeight": 180,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": false,
-  "defaultAttachEnabled": false,
-  "defaultWhitelist": []
-}
-```
-
-这是一个独立工具，不需要附着到其他窗口，所以 `showAttachButton` 和 `defaultAttachEnabled` 都设为 `false`。
-
----
-
-## 步骤 6：创建 Panel 组件
+## 步骤 4：创建 Panel 组件
 
 创建 `src/addons/pomodoro/PomodoroPanel.tsx`：
 
@@ -325,7 +206,7 @@ export default function PomodoroPanel() {
 
 ---
 
-## 步骤 7：创建样式
+## 步骤 5：创建样式
 
 创建 `src/addons/pomodoro/styles.css`：
 
@@ -403,7 +284,7 @@ export default function PomodoroPanel() {
 
 ---
 
-## 步骤 8：创建入口文件
+## 步骤 6：创建入口文件
 
 创建 `src/addons/pomodoro/index.tsx`：
 
@@ -421,18 +302,145 @@ registerPlugin({
 
 ---
 
+## 步骤 7：创建 Rust 后端（可选）
+
+如果需要自定义 Rust 后端逻辑，创建 `src-tauri/src/pomodoro/mod.rs`：
+
+```rust
+use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use tauri::{Emitter, State};
+
+/// 计时器状态（由 Tauri 管理）
+pub struct PomodoroState {
+    pub remaining: Mutex<u32>,
+    pub running: Mutex<bool>,
+}
+
+impl PomodoroState {
+    pub fn new() -> Self {
+        Self {
+            remaining: Mutex::new(25 * 60),
+            running: Mutex::new(false),
+        }
+    }
+}
+
+/// 返回给前端的状态
+#[derive(Serialize, Clone)]
+pub struct PomodoroStatus {
+    pub remaining: u32,
+    pub running: bool,
+}
+
+#[tauri::command]
+pub fn get_pomodoro_status(state: State<PomodoroState>) -> PomodoroStatus {
+    PomodoroStatus {
+        remaining: *state.remaining.lock().unwrap(),
+        running: *state.running.lock().unwrap(),
+    }
+}
+
+#[tauri::command]
+pub fn start_pomodoro(app: tauri::AppHandle, state: State<PomodoroState>) -> Result<(), String> {
+    {
+        let mut running = state.running.lock().unwrap();
+        if *running {
+            return Ok(());
+        }
+        *running = true;
+    }
+
+    let app_clone = app.clone();
+    let state_ref = app.state::<PomodoroState>();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            let mut remaining = state_ref.remaining.lock().unwrap();
+            let running = state_ref.running.lock().unwrap();
+
+            if !*running || *remaining == 0 {
+                break;
+            }
+
+            *remaining -= 1;
+            let r = *remaining;
+
+            drop(remaining);
+            drop(running);
+
+            let _ = app_clone.emit("pomodoro-tick", PomodoroStatus {
+                remaining: r,
+                running: true,
+            });
+
+            if r == 0 {
+                let _ = app_clone.emit("pomodoro-complete", ());
+                break;
+            }
+        }
+
+        *state_ref.running.lock().unwrap() = false;
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pause_pomodoro(state: State<PomodoroState>) {
+    *state.running.lock().unwrap() = false;
+}
+
+#[tauri::command]
+pub fn reset_pomodoro(state: State<PomodoroState>) {
+    *state.remaining.lock().unwrap() = 25 * 60;
+    *state.running.lock().unwrap() = false;
+}
+
+/// 初始化插件——由 build.rs 自动生成的 _plugins.rs 调用
+pub fn setup(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    use std::sync::Arc;
+    let state = Arc::new(PomodoroState::new());
+    app.manage(state);
+}
+```
+
+---
+
+## 步骤 8：在 main.rs 中注册命令
+
+编辑 `src-tauri/src/main.rs`：
+
+```rust
+// 在 generate_handler![] 中添加你的命令
+.invoke_handler(tauri::generate_handler![
+    // ... 已有命令 ...
+    pomodoro::get_pomodoro_status,
+    pomodoro::start_pomodoro,
+    pomodoro::pause_pomodoro,
+    pomodoro::reset_pomodoro,
+])
+```
+
+> **重要**：`build.rs` 会自动扫描 `src-tauri/src/pomodoro/mod.rs`，在 `_plugins.rs` 中生成 `mod pomodoro;` 和 `pomodoro::setup(app);`。你**不需要**在 main.rs 中手动写 `mod pomodoro;`。
+
+---
+
 ## 步骤 9：构建运行
 
 ```bash
 # 安装依赖（如果还没安装）
 npm install
 
-# 开发模式运行
+# 开发模式运行（前端热重载 + Rust 增量编译）
 npm run tauri dev
 ```
 
 启动后：
-1. 打开管理窗口（系统托盘或快捷键）
+1. 打开管理窗口（系统托盘 → "插件管理"）
 2. 在插件列表中找到「🍅 番茄钟」
 3. 点击启用，番茄钟挂件就会出现
 
@@ -449,10 +457,24 @@ src/addons/pomodoro/
 ├── PomodoroPanel.tsx      ← 主组件
 └── styles.css             ← 样式
 
-src-tauri/src/
-├── main.rs                ← 添加 mod + 注册命令
-└── pomodoro.rs            ← Rust 后端逻辑
+src-tauri/src/pomodoro/
+└── mod.rs                 ← Rust 后端逻辑（setup + commands）
+
+src-tauri/src/main.rs      ← 在 generate_handler![] 中注册命令
 ```
+
+---
+
+## 纯前端插件 vs 带后端插件
+
+| 特性 | 纯前端 | 带 Rust 后端 |
+|------|--------|-------------|
+| 需要 mod.rs | ❌ | ✅ |
+| 需要 setup() | ❌ | ✅ |
+| 需要 generate_handler![] | ❌ | ✅ |
+| 可以使用 invoke() | 仅限已有命令 | 自定义命令 |
+| 可以使用 app.emit() | ❌ | ✅ |
+| 文件数 | 4-5 个 | 5-6 个（前端）+ 1 个（后端） |
 
 ---
 

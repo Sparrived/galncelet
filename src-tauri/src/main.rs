@@ -99,6 +99,7 @@ fn update_card_width(state: tauri::State<'_, Arc<AttachState>>, width: u32) {
     *cw = width as i32;
 }
 
+#[tauri::command]
 fn set_body_collapsed(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AttachState>>,
@@ -124,6 +125,7 @@ fn set_body_collapsed(
                 height: h,
             }));
         } else if let Some(eh) = expand_height {
+            let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
                 width: phys_w,
                 height: eh,
             }));
@@ -131,26 +133,33 @@ fn set_body_collapsed(
     }
 }
 
+#[tauri::command]
 fn set_attach_enabled(state: tauri::State<'_, Arc<AttachState>>, window_label: String, enabled: bool) {
     let mut ae = state.attach_enabled.lock().unwrap();
     ae.insert(window_label, enabled);
 }
 
+#[tauri::command]
 fn set_attach_whitelist(state: tauri::State<'_, Arc<AttachState>>, window_label: String, patterns: Vec<String>) {
     let mut wl = state.attach_whitelist.lock().unwrap();
     wl.insert(window_label, patterns);
 }
 
+#[tauri::command]
 fn set_attach_remember(state: tauri::State<'_, Arc<AttachState>>, window_label: String, remember: bool) {
     let mut ar = state.attach_remember.lock().unwrap();
     ar.insert(window_label, remember);
 }
 
+#[tauri::command]
 fn get_browser_url(state: tauri::State<'_, Arc<AttachState>>) -> String {
     state.current_url.lock().unwrap().clone()
 }
 
+#[tauri::command]
 fn create_plugin_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AttachState>>,
     plugin_id: String,
     title: String,
     width: f64,
@@ -168,6 +177,7 @@ fn create_plugin_window(
     create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, default_attach_remember, &default_whitelist);
 }
 
+#[tauri::command]
 fn open_settings_window(app: tauri::AppHandle) {
     let label = "settings";
     if let Some(win) = app.get_webview_window(label) {
@@ -179,6 +189,7 @@ fn open_settings_window(app: tauri::AppHandle) {
     let win = tauri::WebviewWindowBuilder::new(
         &app,
         label,
+        tauri::WebviewUrl::App(url.into()),
     )
     .title("Galncelet 设置")
     .inner_size(400.0, 500.0)
@@ -194,12 +205,14 @@ fn open_settings_window(app: tauri::AppHandle) {
 
     let win_handle = win.clone();
     win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = win_handle.hide();
         }
     });
 }
 
+#[tauri::command]
 fn open_plugin_settings(app: tauri::AppHandle, plugin_id: String) {
     let label = format!("settings-{}", plugin_id);
     if let Some(win) = app.get_webview_window(&label) {
@@ -208,8 +221,10 @@ fn open_plugin_settings(app: tauri::AppHandle, plugin_id: String) {
         return;
     }
     let url = format!("index.html?widget=plugin_settings&plugin={}", plugin_id);
+    let win = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
+        tauri::WebviewUrl::App(url.into()),
     )
     .title(format!("{} 设置", plugin_id))
     .inner_size(380.0, 500.0)
@@ -225,12 +240,14 @@ fn open_plugin_settings(app: tauri::AppHandle, plugin_id: String) {
 
     let win_handle = win.clone();
     win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = win_handle.hide();
         }
     });
 }
 
+#[tauri::command]
 fn open_manage_window(app: tauri::AppHandle) {
     let label = "manage";
     if let Some(win) = app.get_webview_window(label) {
@@ -239,8 +256,10 @@ fn open_manage_window(app: tauri::AppHandle) {
         return;
     }
     let url = "index.html?widget=manage";
+    let win = tauri::WebviewWindowBuilder::new(
         &app,
         label,
+        tauri::WebviewUrl::App(url.into()),
     )
     .title("Galncelet 管理")
     .inner_size(400.0, 500.0)
@@ -256,6 +275,7 @@ fn open_manage_window(app: tauri::AppHandle) {
 
     let win_handle = win.clone();
     win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = win_handle.hide();
         }
@@ -264,10 +284,12 @@ fn open_manage_window(app: tauri::AppHandle) {
 
 // ─── Plugin command wrappers (Tauri requires functions in scope) ───
 
+#[tauri::command]
 fn get_status(repo_path: Option<String>) -> Result<git::GitStatus, String> {
     git::get_status(repo_path.as_deref())
 }
 
+#[tauri::command]
 fn get_file_diff(repo_root: String, file_path: String, staged: bool) -> Result<git::GitDiff, String> {
     git::get_file_diff(&repo_root, &file_path, staged)
 }
@@ -279,53 +301,73 @@ struct GitCommandResult {
     stderr: String,
 }
 
+#[tauri::command]
 fn exec_git_command(repo_root: String, command: String) -> Result<GitCommandResult, String> {
     let (success, stdout, stderr) = git::exec_git_command(&repo_root, &command)?;
     Ok(GitCommandResult { success, stdout, stderr })
 }
 
+#[tauri::command]
 async fn select_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().set_title("选择文件夹").blocking_pick_folder();
     Ok(folder.map(|p| p.to_string()))
 }
 
+#[tauri::command]
 fn stage_file(repo_root: String, file_path: String) -> Result<(), String> { git::stage_file(&repo_root, &file_path) }
 
+#[tauri::command]
 fn stage_all(repo_root: String) -> Result<(), String> { git::stage_all(&repo_root) }
 
+#[tauri::command]
 fn unstage_file(repo_root: String, file_path: String) -> Result<(), String> { git::unstage_file(&repo_root, &file_path) }
 
+#[tauri::command]
 fn discard_file(repo_root: String, file_path: String, status_code: String) -> Result<(), String> { git::discard_file(&repo_root, &file_path, &status_code) }
 
+#[tauri::command]
 fn untrack_file(repo_root: String, file_path: String) -> Result<(), String> { git::untrack_file(&repo_root, &file_path) }
 
+#[tauri::command]
 fn commit(repo_root: String, message: String) -> Result<String, String> { git::commit(&repo_root, &message) }
 
+#[tauri::command]
 fn pull(repo_root: String) -> Result<String, String> { git::pull(&repo_root) }
 
+#[tauri::command]
 fn push(repo_root: String) -> Result<String, String> { git::push(&repo_root) }
 
+#[tauri::command]
 fn git_fetch(repo_root: String) -> Result<String, String> { git::git_fetch(&repo_root) }
 
+#[tauri::command]
 fn list_branches(repo_root: String) -> Result<Vec<git::GitBranch>, String> { git::list_branches(&repo_root) }
 
+#[tauri::command]
 fn checkout_branch(repo_root: String, branch: String) -> Result<String, String> { git::checkout_branch(&repo_root, &branch) }
 
+#[tauri::command]
 fn git_log(repo_root: String, max_count: Option<usize>) -> Result<Vec<git::GitLogEntry>, String> { git::git_log(&repo_root, max_count.unwrap_or(50)) }
 
+#[tauri::command]
 fn list_submodules(repo_root: String) -> Vec<git::SubmoduleInfo> { git::list_submodules(&repo_root) }
 
+#[tauri::command]
 fn list_remotes(repo_root: String) -> Result<Vec<git::RemoteInfo>, String> { git::list_remotes(&repo_root) }
 
+#[tauri::command]
 fn add_remote(repo_root: String, name: String, url: String) -> Result<(), String> { git::add_remote(&repo_root, &name, &url) }
 
+#[tauri::command]
 fn remove_remote(repo_root: String, name: String) -> Result<(), String> { git::remove_remote(&repo_root, &name) }
 
+#[tauri::command]
 fn watch_git_repo(watcher: tauri::State<'_, Arc<git::git_watcher::GitWatcherManager>>, repo_path: String) -> Result<(), String> {
     watcher.watch(&repo_path)
 }
 
+#[tauri::command]
 fn unwatch_git_repo(watcher: tauri::State<'_, Arc<git::git_watcher::GitWatcherManager>>, repo_path: String) {
     watcher.unwatch(&repo_path);
 }
@@ -353,8 +395,15 @@ fn main() {
             app_settings.ensure_plugin_visibility(&manifests);
             println!("[setup] creating widget windows...");
             let seq_set: std::collections::HashSet<String> = app_settings.widget_sequence.iter().cloned().collect();
+            // Register sequence widget labels so attach loop skips them
+            {
+                let mut sl = attach_state.sequence_labels.lock().unwrap();
+                for pid in &app_settings.widget_sequence {
+                    sl.insert(format!("widget-{}", pid));
+                }
+            }
             for manifest in &manifests {
-                let visible = app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(true);
+                let visible = app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(false);
                 let in_sequence = seq_set.contains(&manifest.id);
                 println!("[setup] loading plugin: {} (visible={}, seq={})", manifest.id, visible, in_sequence);
                 // Create window if visible OR if it's in the widget sequence
@@ -411,6 +460,7 @@ fn main() {
             .build().expect("failed to create settings window");
             let h = settings_win.clone();
             settings_win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = h.hide(); }
             });
 
             // System tray (dynamically built from plugin manifests)
@@ -434,17 +484,12 @@ fn main() {
 
             // Start AMKR event WebSocket client
             let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
                 let ws_handle = app_handle.state::<amkr::AmkrWsHandle>();
                 if let Err(e) = amkr::start_amkr_ws(app_handle.clone(), ws_handle).await {
                     eprintln!("[amkr] Failed to start WebSocket client: {}", e);
                 }
             });
-
-            // Auto-watch saved repos
-            let app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
-            for repo in &app_settings.saved_repos {
-                let _ = git_watcher.watch(repo);
-            }
 
             Ok(())
         })
@@ -468,11 +513,6 @@ fn main() {
             settings::set_plugin_visible,
             // Window attach
             window_attach::list_visible_windows,
-            window_attach::snap_widget,
-            window_attach::unsnap_widget,
-            window_attach::get_snap_info,
-            window_attach::get_all_widget_rects,
-            window_attach::move_snap_group,
             // Git plugin wrappers (defined in main.rs)
             get_status,
             get_file_diff,
@@ -515,6 +555,10 @@ fn main() {
             // System Monitor plugin
             system_monitor::fetch_system_metrics,
             // Clipboard History plugin
+            clipboard_history::get_clipboard_history,
+            clipboard_history::copy_to_clipboard,
+            clipboard_history::delete_clipboard_entry,
+            clipboard_history::clear_clipboard_history,
             // Music Player plugin
             music_player::get_media_info,
             music_player::media_control,

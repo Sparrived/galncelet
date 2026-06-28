@@ -2,7 +2,7 @@
 
 插件通过 Tauri 的 IPC 机制与 Rust 后端通信。前端调用 `invoke()` 发送命令，后端通过 `#[tauri::command]` 处理。也可以通过事件系统实现后端向前端的实时推送。
 
-## 流程概览
+## 架构概览
 
 ```
 ┌─────────────┐    invoke("cmd", { args })    ┌──────────────┐
@@ -14,9 +14,79 @@
 └─────────────┘                                └──────────────┘
 ```
 
+## 插件后端目录结构
+
+```
+src-tauri/src/my-plugin/          ← 后端插件目录
+└── mod.rs                         ← setup() + #[tauri::command] 函数
+
+src-tauri/src/
+├── main.rs                        ← 在 generate_handler![] 中注册命令
+├── _plugins.rs                    ← 【自动生成】mod 声明 + setup_all()
+├── acrylic.rs                     ← 框架模块
+├── plugins.rs                     ← 框架模块（manifest 加载）
+├── settings.rs                    ← 框架模块（设置持久化）
+├── tray.rs                        ← 框架模块（系统托盘）
+├── window_attach.rs               ← 框架模块（窗口吸附）
+├── amkr/                          ← AMKR 插件后端
+│   └── mod.rs
+├── browser_ext/                   ← 浏览器扩展插件后端
+│   └── mod.rs
+├── clipboard_history/             ← 剪贴板历史插件后端
+│   └── mod.rs
+├── git/                           ← Git 插件后端
+│   └── mod.rs
+├── music_player/                  ← 音乐播放器插件后端
+│   └── mod.rs
+├── page_notes/                    ← 页面笔记插件后端
+│   └── mod.rs
+└── system_monitor/                ← 系统监控插件后端
+    └── mod.rs
+```
+
+## 自动发现机制（重要）
+
+`build.rs` 会自动扫描 `src-tauri/src/` 下所有包含 `mod.rs` 的子目录，自动生成 `_plugins.rs`：
+
+```rust
+// _plugins.rs（自动生成，不要手动编辑）
+#[path = "amkr/mod.rs"]
+pub mod amkr;
+#[path = "clipboard_history/mod.rs"]
+pub mod clipboard_history;
+// ...
+
+pub fn setup_all(app: &tauri::AppHandle) {
+    amkr::setup(app);
+    clipboard_history::setup(app);
+    // ...
+}
+```
+
+`main.rs` 中只需要：
+
+```rust
+mod _plugins;
+use _plugins::{amkr, clipboard_history, /* ... */};
+
+fn main() {
+    tauri::Builder::default()
+        .setup(|app| {
+            _plugins::setup_all(&app.handle());  // 自动调用所有插件的 setup()
+            // ...
+        })
+}
+```
+
+**你不需要**在 `main.rs` 中写 `mod my_plugin;`。
+
+**你仍然需要**在 `main.rs` 的 `generate_handler![]` 中注册你的 `#[tauri::command]` 函数。
+
+---
+
 ## 步骤 1：定义 Rust 命令
 
-在 `src-tauri/src/` 下创建新模块文件，如 `my_plugin.rs`：
+在 `src-tauri/src/my_plugin/mod.rs` 中创建模块：
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -50,6 +120,13 @@ pub async fn delete_item(id: String) -> Result<(), String> {
     // 错误时返回 Err("错误信息".into())
     Ok(())
 }
+
+/// 初始化插件 —— build.rs 会自动调用此函数
+pub fn setup(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    // 如果需要初始化状态，在这里做
+    // 例如：app.manage(MyState::new());
+}
 ```
 
 ### 命令规则
@@ -76,19 +153,19 @@ pub async fn my_command(app: tauri::AppHandle) -> Result<(), String> {
 
 ## 步骤 2：注册命令
 
-在 `src-tauri/src/main.rs` 中：
+在 `src-tauri/src/main.rs` 的 `generate_handler![]` 中添加：
 
 ```rust
-// 1. 在文件顶部添加模块声明
-mod my_plugin;
-
-// 2. 在 invoke_handler 的 generate_handler![] 中添加命令
 .invoke_handler(tauri::generate_handler![
     // ... 已有命令 ...
     my_plugin::fetch_my_items,
     my_plugin::delete_item,
 ])
 ```
+
+`build.rs` 会自动处理 `mod my_plugin;` 声明，你只需要：
+1. 创建 `src-tauri/src/my_plugin/mod.rs`
+2. 在 `generate_handler![]` 中注册命令
 
 ## 步骤 3：前端 API 封装
 
@@ -237,6 +314,26 @@ await saveSettings({
 
 > **注意**：`AppSettings` 类型定义在 `src/lib/types.ts`。如果你的插件需要额外的持久化字段，需要先在 `AppSettings` 接口中添加，同时在 Rust 端的 `AppSettings` 结构体中同步添加。
 
+当前 `AppSettings` 包含的字段（`src/lib/types.ts`）：
+
+```ts
+interface AppSettings {
+  refreshIntervalMs: number;    // 全局刷新间隔（默认 2000ms）
+  cardWidth: number;            // 挂件窗口宽度（默认 360px）
+  logMaxCount: number;          // 日志最大条数（默认 50）
+  alwaysOnTop: boolean;         // 窗口置顶（默认 true）
+  pullRebase: boolean;          // git pull 使用 rebase（默认 true）
+  savedRepos: string[];         // Git 保存的仓库路径
+  currentRepo?: string;         // 当前活跃的仓库路径
+  panelVisibility: Record<string, boolean>;  // 插件可见性
+  windowStates: Record<string, WindowState>; // 每个挂件的窗口状态
+  hideFullscreen: boolean;      // 全屏时隐藏挂件（默认 true）
+  pluginHotkeys: Record<string, string>;     // 插件快捷键
+  widgetSequence: string[];     // 挂件序列（共享位置，热键切换）
+  sequenceHotkey: string | null;// 序列切换热键
+}
+```
+
 ### 使用独立存储
 
 也可以通过自定义 Tauri 命令实现独立的存储：
@@ -261,9 +358,40 @@ pub async fn save_my_config(app: tauri::AppHandle, config: MyConfig) -> Result<(
 }
 ```
 
+## 全局热键
+
+框架支持两种热键：
+
+1. **插件独立热键**：每个插件可以绑定一个全局快捷键，触发时显示/隐藏该插件窗口
+2. **序列切换热键**：当多个插件使用 widget sequence 共享位置时，热键可以在它们之间循环切换
+
+### 设置插件热键
+
+```ts
+import { setPluginHotkey } from "../../lib/api";
+
+// 设置热键
+await setPluginHotkey("my-plugin", "ctrl+shift+m");
+
+// 清除热键
+await setPluginHotkey("my-plugin", null);
+```
+
+### 设置序列热键
+
+```ts
+import { setSequenceHotkey, setWidgetSequence } from "../../lib/api";
+
+// 设置序列
+await setWidgetSequence(["plugin-a", "plugin-b", "plugin-c"]);
+
+// 设置序列切换热键
+await setSequenceHotkey("ctrl+shift+tab");
+```
+
 ## 完整示例：计数器插件
 
-### Rust (`src-tauri/src/counter.rs`)
+### Rust (`src-tauri/src/counter/mod.rs`)
 
 ```rust
 use std::sync::Mutex;
@@ -282,22 +410,24 @@ pub fn increment_counter(state: State<CounterState>) -> i64 {
     *val += 1;
     *val
 }
+
+pub fn setup(_app: &tauri::AppHandle) {
+    // setup 由 build.rs 自动调用
+}
 ```
 
 ### main.rs 注册
 
 ```rust
-mod counter;
-
-// 在 Builder 中管理状态
-.manage(counter::CounterState(Mutex::new(0)))
-
-// 注册命令
+// 只需要在 generate_handler![] 中注册命令
 .invoke_handler(tauri::generate_handler![
+    // ... 已有命令 ...
     counter::get_counter,
     counter::increment_counter,
 ])
 ```
+
+> **不需要**在 main.rs 中写 `mod counter;` —— build.rs 会自动生成。
 
 ### 前端 api.ts
 

@@ -21,7 +21,7 @@ export interface AppSettings {
   savedRepos: string[];
   /** Last active repository path (persisted across sessions) */
   currentRepo?: string;
-  /** Panel visibility keyed by panel id. Missing key = visible. */
+  /** Panel visibility keyed by panel id. Missing key = hidden. */
   panelVisibility: Record<string, boolean>;
   /** Per-window persisted state */
   windowStates: Record<string, WindowState>;

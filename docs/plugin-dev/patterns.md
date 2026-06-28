@@ -25,6 +25,7 @@ useEffect(() => {
 | 插件 | 间隔 | 原因 |
 |------|------|------|
 | system-monitor | 2000ms | 系统指标变化不快 |
+| music-player | 1000ms / 5000ms | 媒体信息 1s，会话列表 5s |
 | clipboard-history | 1000ms | 需要及时发现新剪贴板内容 |
 | page-notes | 500ms | URL 变化需要快速响应 |
 
@@ -50,12 +51,35 @@ useEffect(() => {
 | amkr | `amkr-event` | WebSocket 后端 |
 | git | `git-changed` | 文件系统监听 |
 | git | `ai-commit-progress` | AI 流式生成 |
+| pomodoro（示例） | `pomodoro-tick` | Rust tokio 后台任务 |
+| pomodoro（示例） | `pomodoro-complete` | Rust tokio 后台任务 |
 
 ### 选择建议
 
 - 后端能发事件 → 用事件驱动（延迟低、资源省）
 - 后端只有请求-响应 → 用轮询
 - 可以混合使用：轮询兜底 + 事件触发即时刷新
+
+### 防抖与节流
+
+对于频繁触发的事件（如剪贴板变化），考虑使用 `useRef` + `setTimeout` 手动防抖：
+
+```tsx
+const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+useEffect(() => {
+  const unlisten = listen<ClipboardEntry>("clipboard-update", (e) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setEntry(e.payload);
+    }, 300);
+  });
+  return () => {
+    unlisten.then((fn) => fn());
+    if (timerRef.current) clearTimeout(timerRef.current);
+  };
+}, []);
+```
 
 ---
 
@@ -99,8 +123,29 @@ src/addons/my-plugin/
 | clipboard-history | 0 | — |
 | system-monitor | 0 | — |
 | page-notes | 0 | （内部内联了 RuleItem、RuleEditor） |
+| music-player | 0 | — |
 | amkr | 1 | `Dashboard.tsx` |
 | git | 4 | `GitTree.tsx`、`DiffViewer.tsx`、`CommitTree.tsx`、`GitConsole.tsx` |
+
+### 子组件通信
+
+子组件通过 props 与父组件通信，避免跨组件状态共享：
+
+```tsx
+// Parent: MyPluginPanel.tsx
+export default function MyPluginPanel() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  return (
+    <div>
+      <ItemList onSelect={setSelectedId} />
+      {selectedId && <DetailView id={selectedId} />}
+    </div>
+  );
+}
+```
+
+如果需要跨层级通信，使用 React Context 或状态提升到 Panel 层。
 
 ---
 
@@ -115,21 +160,33 @@ src/addons/my-plugin/
 | page-notes | `.pn-` | `.pn-panel`、`.pn-view`、`.pn-rule` |
 | amkr | `.amkr-` | `.amkr-panel`、`.amkr-metric` |
 | git | `.tree-`、`.diff-`、`.commit-` | `.tree-node`、`.diff-line`、`.commit-row` |
+| music-player | `.mp-` | `.mp-panel`、`.mp-controls`、`.mp-info` |
 
 ### 推荐规范
 
 ```css
 /* 插件根容器 */
-.mp-panel { padding: 8px 10px; }
+.mp-panel {
+  padding: 8px 10px;
+}
 
 /* 子模块 */
-.mp-header { ... }
-.mp-list { ... }
-.mp-item { ... }
+.mp-header {
+  /* ... */
+}
+
+.mp-list {
+  /* ... */
+}
 
 /* 状态修饰符 */
-.mp-item--active { ... }
-.mp-item--disabled { ... }
+.mp-item--active {
+  /* ... */
+}
+
+.mp-item--disabled {
+  /* ... */
+}
 ```
 
 ### 使用全局 CSS 变量
@@ -152,6 +209,24 @@ src/addons/my-plugin/
 }
 ```
 
+### 毛玻璃背景
+
+插件面板默认透明，背景色由全局变量控制：
+
+```css
+.mp-panel {
+  background: transparent;  /* 让 WidgetShell 的毛玻璃透出来 */
+}
+```
+
+如果需要不透明背景：
+
+```css
+.mp-panel {
+  background: var(--glass-bg);
+}
+```
+
 ---
 
 ## 共享组件库
@@ -166,11 +241,11 @@ src/addons/my-plugin/
 import { RadialGauge } from "../../components/RadialGauge";
 
 <RadialGauge
-  value={cpuPct}         // 0-100 的数值
-  label={`${cpuPct}%`}   // 中心显示文字
-  color="var(--mcha-cyan)" // 圆弧颜色
-  sub="CPU"              // 底部标签
-  sub2="45°C"            // 底部第二行（可选）
+  value={cpuPct}              // 0-100 的数值
+  label={`${cpuPct}%`}       // 中心显示文字
+  color="var(--mcha-cyan)"    // 圆弧颜色
+  sub="CPU"                   // 底部标签
+  sub2="45°C"                 // 底部第二行（可选）
   sub2Color="var(--mcha-amber)" // 第二行颜色（可选）
 />
 ```
@@ -197,9 +272,9 @@ import { AnimatedNumber } from "../../components/AnimatedNumber";
 import { ProgressBar } from "../../components/ProgressBar";
 
 <ProgressBar
-  value={0.85}              // 0-1
+  value={0.85}               // 0-1
   color="var(--mcha-green)"
-  label="85%"               // 可选文字标签
+  label="85%"                // 可选文字标签
 />
 ```
 
@@ -256,11 +331,11 @@ import { EmptyState } from "../../components/EmptyState";
 ```ts
 import { fmtNumber, fmtMs, fmtBytes, fmtHz, fmtPercent, fmtUptime } from "../../lib/format";
 
-fmtNumber(1234567)    // "1.2M"
-fmtMs(1500)           // "1.5s"
-fmtBytes(1048576)     // "1.0 MB"
-fmtHz(3600000000)     // "3.60 GHz"
-fmtPercent(0.85)      // "85.0%"
+fmtNumber(1234567)      // "1.2M"
+fmtMs(1500)             // "1.5s"
+fmtBytes(1048576)       // "1.0 MB"
+fmtHz(3600000000)       // "3.60 GHz"
+fmtPercent(0.85)        // "85.0%"
 fmtUptime("2024-01-01T00:00:00Z")  // "3h42m"
 ```
 
@@ -377,3 +452,34 @@ return (
   </div>
 );
 ```
+
+---
+
+## WidgetSequence（挂件序列）
+
+多个插件可以共享同一个窗口位置，通过热键循环切换。这在管理页面中配置：
+
+1. 选择要加入序列的插件
+2. 设置序列切换热键（如 `Ctrl+Shift+Tab`）
+3. 按热键在序列中的插件之间切换
+
+序列中的第一个插件默认显示，其余隐藏。切换时隐藏当前、显示下一个。
+
+```ts
+import { setWidgetSequence, setSequenceHotkey } from "../../lib/api";
+
+// 设置序列
+await setWidgetSequence(["plugin-a", "plugin-b", "plugin-c"]);
+
+// 设置切换热键
+await setSequenceHotkey("ctrl+shift+tab");
+
+// 清除序列
+await setWidgetSequence([]);
+await setSequenceHotkey(null);
+```
+
+序列中的插件在 `WidgetShell` 中会：
+- 隐藏关闭按钮（防止误关）
+- 共享同一个窗口位置
+- 按热键循环显示
