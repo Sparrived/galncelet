@@ -176,7 +176,7 @@ function Publish-GitHubRelease {
     $artifactPaths += $ChecksumsPath
 
     $releaseExists = $false
-    $null = & gh release view $ReleaseTag 2>$null
+    cmd /c "gh release view $ReleaseTag >NUL 2>NUL"
     if ($LASTEXITCODE -eq 0) {
         $releaseExists = $true
     }
