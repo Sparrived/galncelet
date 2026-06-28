@@ -1,4 +1,4 @@
-﻿# Release
+# Release
 
 This project now uses one reusable flow for local builds and GitHub Actions releases.
 
@@ -54,3 +54,7 @@ The release build always produces:
 - `SHA256SUMS.txt` for checksum verification
 
 The release script is the single entry point for local verification and for the GitHub Actions build step, so future releases can reuse the same logic without duplicating steps.
+
+## Release Playbook
+
+- See docs/release-playbook.md for the shortest day-to-day release checklist.
