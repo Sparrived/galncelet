@@ -16,3 +16,4 @@ src-tauri/gen/
 
 # OS
 Thumbs.db
+.claude/
