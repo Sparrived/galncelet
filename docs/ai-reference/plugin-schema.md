@@ -289,8 +289,8 @@ interface UpdateCheckResult {
 
 发布产物：
 
-- `src-tauri/target/release/galncelet.exe`
-- `src-tauri/target/release/bundle/**`
-- `src-tauri/target/release/bundle/SHA256SUMS.txt`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS.txt`
 
 脚本会验证 `galncelet.exe` 是 Windows GUI subsystem，确保 release 版不会打开控制台窗口。

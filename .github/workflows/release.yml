@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -86,8 +86,8 @@ jobs:
         with:
           name: galncelet-${{ needs.resolve.outputs.tag }}
           path: |
-            src-tauri/target/release/galncelet.exe
-            src-tauri/target/release/bundle/**
+            src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**
           if-no-files-found: error
 
   verify-release:

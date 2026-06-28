@@ -31,7 +31,7 @@ Use this when the tag already exists and you want to reuse it:
 
 ## What gets produced
 
-- `src-tauri/target/release/galncelet.exe`
-- the Tauri bundle under `src-tauri/target/release/bundle/`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe`
+- the Tauri bundle under `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`
 - `SHA256SUMS.txt`
 - a GitHub Release with generated notes

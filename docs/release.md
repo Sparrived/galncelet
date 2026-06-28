@@ -49,8 +49,8 @@ The workflow at `.github/workflows/release.yml` now supports both tag pushes and
 
 The release build always produces:
 
-- `src-tauri/target/release/galncelet.exe`
-- the Tauri bundle directory under `src-tauri/target/release/bundle/`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe`
+- the Tauri bundle directory under `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`
 - `SHA256SUMS.txt` for checksum verification
 
 The release script is the single entry point for local verification and for the GitHub Actions build step, so future releases can reuse the same logic without duplicating steps.

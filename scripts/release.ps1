@@ -15,8 +15,9 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $Root "src-tauri"
-$BundleDir = Join-Path $TauriDir "target\release\bundle"
-$ExePath = Join-Path $TauriDir "target\release\galncelet.exe"
+$ReleaseDir = Join-Path $TauriDir ("target\{0}\release" -f $Target)
+$BundleDir = Join-Path $ReleaseDir "bundle"
+$ExePath = Join-Path $ReleaseDir "galncelet.exe"
 $ChecksumsPath = Join-Path $BundleDir "SHA256SUMS.txt"
 
 function Invoke-Step {

@@ -292,7 +292,7 @@ useEffect(() => {
 2. 执行 `npm ci`。
 3. 执行 `npm run tauri -- build --target x86_64-pc-windows-msvc`。
 4. 校验 Windows GUI subsystem，避免发布版弹出控制台窗口。
-5. 生成 `src-tauri/target/release/bundle/SHA256SUMS.txt`。
+5. 生成 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS.txt`。
 6. 可选通过 GitHub CLI 发布到 GitHub Releases。
 
 本项目的更新检查器读取 GitHub Releases latest release，并用 `v*` tag 与当前应用版本比较。因此发布新版本时必须创建形如 `v1.0.0` 的 tag/release，并确保应用内版本号同步。
