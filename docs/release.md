@@ -1,54 +1,48 @@
 # Release
 
-This project ships Windows releases through `scripts/release.ps1` and `.github/workflows/release.yml`.
+This project now uses one reusable flow for local builds and GitHub Actions releases.
 
-## Local build
+## Local release build
 
 ```powershell
 npm run release
 ```
 
-The script runs `npm ci`, builds the Tauri release bundle, verifies that `src-tauri/target/release/galncelet.exe` uses the Windows GUI subsystem, and writes `SHA256SUMS.txt` next to the bundle artifacts.
+This performs the full build-and-verify flow:
 
-Release builds do not open a console window because `src-tauri/src/main.rs` sets:
+- checks prerequisites
+- validates the working tree unless `-AllowDirty` is passed
+- optionally syncs the version into `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`
+- installs locked dependencies with `npm ci`
+- builds the Windows Tauri release bundle
+- verifies the release binary is linked as a Windows GUI app
+- writes `SHA256SUMS.txt` next to the bundle artifacts
 
-```rust
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-```
-
-The script verifies this at the PE header level and fails if the executable is linked as a console app.
-
-## Local GitHub Release publish
-
-Authenticate GitHub CLI first:
+To build with a specific version without publishing:
 
 ```powershell
-gh auth login
+npm run release -- -Version 0.1.0 -Tag v0.1.0
 ```
 
-Build and publish a release:
+To publish an existing build from a machine with `gh` configured:
 
 ```powershell
 npm run release:publish -- -Tag v0.1.0
 ```
 
-Useful options:
-
-```powershell
-npm run release:publish -- -Version 0.1.1 -Tag v0.1.1 -Draft
-npm run release:publish -- -Tag v0.2.0-beta.1 -Prerelease
-npm run release -- -AllowDirty
-```
-
-`-Version` updates `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` before building.
-
 ## GitHub Actions release
 
-Push a version tag to build and publish from GitHub Actions:
+The workflow at `.github/workflows/release.yml` now supports both tag pushes and manual dispatch:
 
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
+- pushing a tag like `v0.1.0` builds the artifacts and publishes the release
+- running the workflow manually can reuse an existing tag and optionally publish, draft, or mark the release as prerelease
 
-The workflow can also be started manually from the GitHub Actions UI with an existing tag.
+## Artifact layout
+
+The release build always produces:
+
+- `src-tauri/target/release/galncelet.exe`
+- the Tauri bundle directory under `src-tauri/target/release/bundle/`
+- `SHA256SUMS.txt` for checksum verification
+
+The release script is the single entry point for local verification and for the GitHub Actions build step, so future releases can reuse the same logic without duplicating steps.

@@ -6,7 +6,8 @@ param(
     [switch]$SkipBuild,
     [switch]$Publish,
     [switch]$Draft,
-    [switch]$Prerelease
+    [switch]$Prerelease,
+    [switch]$SkipRelease
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +17,7 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $Root "src-tauri"
 $BundleDir = Join-Path $TauriDir "target\release\bundle"
 $ExePath = Join-Path $TauriDir "target\release\galncelet.exe"
+$ChecksumsPath = Join-Path $BundleDir "SHA256SUMS.txt"
 
 function Invoke-Step {
     param(
@@ -86,6 +88,20 @@ function Set-CargoPackageVersion {
     $lines | Set-Content $Path -Encoding UTF8
 }
 
+function Get-ReleaseArtifacts {
+    $patterns = @("*.msi", "*.exe", "*.nsis.zip", "*.app.tar.gz", "*.AppImage", "*.deb", "*.rpm", "*.dmg")
+    $artifacts = @()
+
+    if (Test-Path $BundleDir) {
+        foreach ($pattern in $patterns) {
+            $artifacts += Get-ChildItem -Path $BundleDir -Recurse -File -Filter $pattern
+        }
+    }
+
+    $artifacts += Get-Item $ExePath -ErrorAction SilentlyContinue
+    return $artifacts | Sort-Object FullName -Unique
+}
+
 function Test-WindowsGuiSubsystem {
     param([string]$Path)
 
@@ -104,26 +120,57 @@ function Test-WindowsGuiSubsystem {
         if ($subsystem -ne 2) {
             throw "Expected Windows GUI subsystem (2), found subsystem $subsystem. The app may open a console window."
         }
-
-        Write-Host "Verified Windows GUI subsystem for $Path"
     }
     finally {
         $stream.Dispose()
     }
 }
 
-function Get-ReleaseArtifacts {
-    $patterns = @("*.msi", "*.exe", "*.nsis.zip", "*.app.tar.gz", "*.AppImage", "*.deb", "*.rpm", "*.dmg")
-    $artifacts = @()
-
-    if (Test-Path $BundleDir) {
-        foreach ($pattern in $patterns) {
-            $artifacts += Get-ChildItem -Path $BundleDir -Recurse -File -Filter $pattern
-        }
+function New-ReleaseChecksumFile {
+    $artifacts = @(Get-ReleaseArtifacts)
+    if ($artifacts.Count -eq 0) {
+        throw "No release artifacts were found under $BundleDir."
     }
 
-    $artifacts += Get-Item $ExePath -ErrorAction SilentlyContinue
-    return $artifacts | Sort-Object FullName -Unique
+    $checksums = foreach ($artifact in $artifacts) {
+        $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
+        $relativePath = [System.IO.Path]::GetRelativePath($Root, $artifact.FullName)
+        "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), ($relativePath -replace '\\', '/')
+    }
+
+    $checksums | Set-Content $ChecksumsPath -Encoding UTF8
+    return $artifacts
+}
+
+function Publish-GitHubRelease {
+    param(
+        [string]$ReleaseTag,
+        [bool]$IsDraft,
+        [bool]$IsPrerelease
+    )
+
+    Assert-Command "gh"
+
+    $artifactPaths = @(Get-ReleaseArtifacts | ForEach-Object { $_.FullName })
+    $artifactPaths += $ChecksumsPath
+
+    $releaseExists = $false
+    gh release view $ReleaseTag *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $releaseExists = $true
+    }
+
+    if ($releaseExists) {
+        gh release upload $ReleaseTag @artifactPaths --clobber
+        return
+    }
+
+    $args = @("release", "create", $ReleaseTag)
+    $args += $artifactPaths
+    $args += @("--title", $ReleaseTag, "--generate-notes")
+    if ($IsDraft) { $args += "--draft" }
+    if ($IsPrerelease) { $args += "--prerelease" }
+    gh @args
 }
 
 Push-Location $Root
@@ -132,8 +179,7 @@ try {
         Assert-Command "npm"
         Assert-Command "cargo"
         Assert-Command "git"
-
-        if ($Publish) {
+        if ($Publish -and -not $SkipRelease) {
             Assert-Command "gh"
         }
     }
@@ -163,54 +209,22 @@ try {
             npm ci
         }
 
-        Invoke-Step "Building stable Tauri release" {
+        Invoke-Step "Building Tauri release" {
             npm run tauri -- build --target $Target
         }
     }
 
-    Invoke-Step "Verifying release executable does not use a console subsystem" {
+    Invoke-Step "Verifying release executable subsystem" {
         Test-WindowsGuiSubsystem $ExePath
     }
 
-    Invoke-Step "Writing artifact checksums" {
-        $artifacts = @(Get-ReleaseArtifacts)
-        if ($artifacts.Count -eq 0) {
-            throw "No release artifacts were found under $BundleDir."
-        }
-
-        $checksumPath = Join-Path $BundleDir "SHA256SUMS.txt"
-        $hashLines = foreach ($artifact in $artifacts) {
-            $hash = Get-FileHash -Algorithm SHA256 $artifact.FullName
-            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $artifact.Name
-        }
-        $hashLines | Set-Content $checksumPath -Encoding ASCII
-        Write-Host "Artifacts:"
-        $artifacts.FullName | ForEach-Object { Write-Host "  $_" }
-        Write-Host "  $checksumPath"
+    Invoke-Step "Writing release checksums" {
+        New-ReleaseChecksumFile | Out-Null
     }
 
-    if ($Publish) {
+    if ($Publish -and -not $SkipRelease) {
         Invoke-Step "Publishing GitHub Release $releaseTag" {
-            $artifactPaths = @(Get-ReleaseArtifacts | ForEach-Object { $_.FullName })
-            $artifactPaths += (Join-Path $BundleDir "SHA256SUMS.txt")
-
-            $releaseExists = $false
-            gh release view $releaseTag *> $null
-            if ($LASTEXITCODE -eq 0) {
-                $releaseExists = $true
-            }
-
-            if ($releaseExists) {
-                gh release upload $releaseTag @artifactPaths --clobber
-            }
-            else {
-                $args = @("release", "create", $releaseTag)
-                $args += $artifactPaths
-                $args += @("--title", $releaseTag, "--generate-notes")
-                if ($Draft) { $args += "--draft" }
-                if ($Prerelease) { $args += "--prerelease" }
-                gh @args
-            }
+            Publish-GitHubRelease -ReleaseTag $releaseTag -IsDraft ([bool]$Draft) -IsPrerelease ([bool]$Prerelease)
         }
     }
 

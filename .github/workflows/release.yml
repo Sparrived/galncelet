@@ -10,6 +10,11 @@ on:
         description: "Release tag, for example v0.1.0"
         required: true
         type: string
+      publish:
+        description: "Create or update the GitHub Release"
+        required: false
+        default: true
+        type: boolean
       draft:
         description: "Create the GitHub Release as a draft"
         required: false
@@ -25,8 +30,8 @@ permissions:
   contents: write
 
 jobs:
-  release-windows:
-    name: Build Windows release
+  build-release:
+    name: Build release artifacts
     runs-on: windows-latest
 
     steps:
@@ -34,6 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Resolve release tag
         id: release
@@ -47,13 +53,6 @@ jobs:
             throw "Release tag must start with 'v'. Received '$tag'."
           }
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Use repository tag for manual releases
-        if: github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: |
-          git fetch --tags --force
-          git checkout "${{ steps.release.outputs.tag }}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -71,19 +70,66 @@ jobs:
         run: |
           Remove-Item -LiteralPath "src-tauri/.cargo/config.toml" -Force -ErrorAction SilentlyContinue
 
-      - name: Build, verify, and publish release
+      - name: Build release package
+        shell: pwsh
+        run: |
+          .\scripts\release.ps1 -Tag "${{ steps.release.outputs.tag }}" -AllowDirty -SkipRelease
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: galncelet-${{ steps.release.outputs.tag }}
+          path: |
+            src-tauri/target/release/galncelet.exe
+            src-tauri/target/release/bundle/**
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: windows-latest
+    needs: build-release
+    if: github.event_name == 'push' || inputs.publish == true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: galncelet-${{ github.ref_name != '' && github.ref_name || inputs.tag }}
+          path: release-artifacts
+
+      - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $params = @{
-            Tag = "${{ steps.release.outputs.tag }}"
-            Target = "x86_64-pc-windows-msvc"
-            AllowDirty = $true
-            Publish = $true
-          }
+          $tag = "${{ github.ref_name }}"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $params.Draft = [System.Convert]::ToBoolean("${{ inputs.draft }}")
-            $params.Prerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+            $tag = "${{ inputs.tag }}"
           }
-          .\scripts\release.ps1 @params
+          if (-not $tag.StartsWith("v")) {
+            throw "Release tag must start with 'v'. Received '$tag'."
+          }
+
+          $draft = [System.Convert]::ToBoolean("${{ inputs.draft }}")
+          $prerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+          $artifactRoot = Join-Path $PWD "release-artifacts"
+          $files = Get-ChildItem -Path $artifactRoot -Recurse -File | ForEach-Object { $_.FullName }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          }
+          else {
+            $args = @("release", "create", $tag)
+            $args += $files
+            $args += @("--title", $tag, "--generate-notes")
+            if ($draft) { $args += "--draft" }
+            if ($prerelease) { $args += "--prerelease" }
+            gh @args
+          }
