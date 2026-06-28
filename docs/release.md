@@ -29,20 +29,20 @@ This performs the full build-and-verify flow:
 To build with a specific version without publishing:
 
 ```powershell
-npm run release -- -Version 0.1.0 -Tag v0.1.0
+npm run release -- -Version 1.0.0 -Tag v1.0.0
 ```
 
 To publish an existing build from a machine with `gh` configured:
 
 ```powershell
-npm run release:publish -- -Tag v0.1.0
+npm run release:publish -- -Tag v1.0.0
 ```
 
 ## GitHub Actions release
 
 The workflow at `.github/workflows/release.yml` now supports both tag pushes and manual dispatch:
 
-- pushing a tag like `v0.1.0` builds the artifacts and publishes the release
+- pushing a tag like `v1.0.0` builds the artifacts and publishes the release
 - running the workflow manually can reuse an existing tag and optionally publish, draft, or mark the release as prerelease
 
 ## Artifact layout

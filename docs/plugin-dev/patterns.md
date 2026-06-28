@@ -1,485 +1,222 @@
 # 常见模式与最佳实践
 
+本页总结 Galncelet 插件的常见实现模式，适合开发新插件或审查现有插件时使用。
+
 ## 数据更新策略
 
-### 轮询（Polling）
+### 轮询
 
-适用于没有实时推送机制的场景。通过 `setInterval` 定期调用 API：
+适合系统指标、Git 状态、媒体会话等需要周期刷新但没有可靠事件源的数据。
 
 ```tsx
 useEffect(() => {
-  // 首次立即加载
-  fetchData().then(setData).catch(() => {});
+  let cancelled = false;
 
-  // 定时轮询
-  const interval = setInterval(() => {
-    fetchData().then(setData).catch(() => {});
-  }, 2000);
+  const load = async () => {
+    try {
+      const next = await fetchData();
+      if (!cancelled) setData(next);
+    } catch (error) {
+      if (!cancelled) setError(String(error));
+    }
+  };
 
-  return () => clearInterval(interval);
-}, []);
-```
-
-现有插件的轮询间隔：
-
-| 插件 | 间隔 | 原因 |
-|------|------|------|
-| system-monitor | 2000ms | 系统指标变化不快 |
-| music-player | 1000ms / 5000ms | 媒体信息 1s，会话列表 5s |
-| clipboard-history | 1000ms | 需要及时发现新剪贴板内容 |
-| page-notes | 500ms | URL 变化需要快速响应 |
-
-### 事件驱动（Event-driven）
-
-适用于后端能主动推送的场景（WebSocket、文件监听等）：
-
-```tsx
-import { listen } from "@tauri-apps/api/event";
-
-useEffect(() => {
-  const unlisten = listen<MyPayload>("my-event", (event) => {
-    setData(event.payload);
-  });
-  return () => { unlisten.then((fn) => fn()); };
-}, []);
-```
-
-现有插件的事件使用：
-
-| 插件 | 事件名 | 触发源 |
-|------|--------|--------|
-| amkr | `amkr-event` | WebSocket 后端 |
-| git | `git-changed` | 文件系统监听 |
-| git | `ai-commit-progress` | AI 流式生成 |
-| pomodoro（示例） | `pomodoro-tick` | Rust tokio 后台任务 |
-| pomodoro（示例） | `pomodoro-complete` | Rust tokio 后台任务 |
-
-### 选择建议
-
-- 后端能发事件 → 用事件驱动（延迟低、资源省）
-- 后端只有请求-响应 → 用轮询
-- 可以混合使用：轮询兜底 + 事件触发即时刷新
-
-### 防抖与节流
-
-对于频繁触发的事件（如剪贴板变化），考虑使用 `useRef` + `setTimeout` 手动防抖：
-
-```tsx
-const timerRef = useRef<ReturnType<typeof setTimeout>>();
-
-useEffect(() => {
-  const unlisten = listen<ClipboardEntry>("clipboard-update", (e) => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      setEntry(e.payload);
-    }, 300);
-  });
+  load();
+  const interval = setInterval(load, 1000);
   return () => {
-    unlisten.then((fn) => fn());
-    if (timerRef.current) clearTimeout(timerRef.current);
+    cancelled = true;
+    clearInterval(interval);
   };
 }, []);
 ```
 
----
+建议间隔：
 
-## 子组件组织
+| 场景 | 间隔 |
+| --- | --- |
+| 系统监控 | 1000-2000ms |
+| 媒体播放状态 | 500-1000ms |
+| Git 状态兜底刷新 | 2000ms 以上 |
+| 网络 API | 5000ms 以上或手动刷新 |
 
-### 简单插件：单文件
+### 事件驱动
 
-如果组件逻辑简单（如 clipboard-history），直接在 Panel 文件中完成所有渲染：
-
-```
-src/addons/my-plugin/
-├── index.tsx
-├── manifest.json
-├── api.ts
-├── MyPluginPanel.tsx    ← 所有 UI 逻辑在这里
-└── styles.css
-```
-
-### 复杂插件：components/ 目录
-
-当组件有独立的 UI 模块时，拆分到 `components/` 目录：
-
-```
-src/addons/my-plugin/
-├── index.tsx
-├── manifest.json
-├── types.ts
-├── api.ts
-├── MyPluginPanel.tsx    ← 主容器，编排子组件
-├── styles.css
-└── components/
-    ├── Header.tsx
-    ├── ItemList.tsx
-    └── DetailView.tsx
-```
-
-现有插件的拆分情况：
-
-| 插件 | 子组件数 | 子组件 |
-|------|---------|--------|
-| clipboard-history | 0 | — |
-| system-monitor | 0 | — |
-| page-notes | 0 | （内部内联了 RuleItem、RuleEditor） |
-| music-player | 0 | — |
-| amkr | 1 | `Dashboard.tsx` |
-| git | 4 | `GitTree.tsx`、`DiffViewer.tsx`、`CommitTree.tsx`、`GitConsole.tsx` |
-
-### 子组件通信
-
-子组件通过 props 与父组件通信，避免跨组件状态共享：
+适合剪贴板、文件 watcher、WebSocket、浏览器扩展消息等后端可主动推送的场景。
 
 ```tsx
-// Parent: MyPluginPanel.tsx
-export default function MyPluginPanel() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  return (
-    <div>
-      <ItemList onSelect={setSelectedId} />
-      {selectedId && <DetailView id={selectedId} />}
-    </div>
-  );
-}
-```
-
-如果需要跨层级通信，使用 React Context 或状态提升到 Panel 层。
-
----
-
-## CSS 命名约定
-
-每个插件使用自己的 CSS 类名前缀，避免冲突：
-
-| 插件 | 前缀 | 示例 |
-|------|------|------|
-| system-monitor | `.sm-` | `.sm-panel`、`.sm-gauges`、`.sm-cell` |
-| clipboard-history | `.cb-` | `.cb-panel`、`.cb-item`、`.cb-search` |
-| page-notes | `.pn-` | `.pn-panel`、`.pn-view`、`.pn-rule` |
-| amkr | `.amkr-` | `.amkr-panel`、`.amkr-metric` |
-| git | `.tree-`、`.diff-`、`.commit-` | `.tree-node`、`.diff-line`、`.commit-row` |
-| music-player | `.mp-` | `.mp-panel`、`.mp-controls`、`.mp-info` |
-
-### 推荐规范
-
-```css
-/* 插件根容器 */
-.mp-panel {
-  padding: 8px 10px;
-}
-
-/* 子模块 */
-.mp-header {
-  /* ... */
-}
-
-.mp-list {
-  /* ... */
-}
-
-/* 状态修饰符 */
-.mp-item--active {
-  /* ... */
-}
-
-.mp-item--disabled {
-  /* ... */
-}
-```
-
-### 使用全局 CSS 变量
-
-始终使用全局主题变量保持视觉一致：
-
-```css
-.mp-item {
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--glass-border);
-  background: var(--glass-highlight);
-}
-
-.mp-error {
-  color: var(--mcha-red);
-}
-
-.mp-success {
-  color: var(--mcha-green);
-}
-```
-
-### 毛玻璃背景
-
-插件面板默认透明，背景色由全局变量控制：
-
-```css
-.mp-panel {
-  background: transparent;  /* 让 WidgetShell 的毛玻璃透出来 */
-}
-```
-
-如果需要不透明背景：
-
-```css
-.mp-panel {
-  background: var(--glass-bg);
-}
-```
-
----
-
-## 共享组件库
-
-`src/components/` 下提供了 7 个可复用组件：
-
-### RadialGauge
-
-环形仪表盘，常用于百分比指标展示。
-
-```tsx
-import { RadialGauge } from "../../components/RadialGauge";
-
-<RadialGauge
-  value={cpuPct}              // 0-100 的数值
-  label={`${cpuPct}%`}       // 中心显示文字
-  color="var(--mcha-cyan)"    // 圆弧颜色
-  sub="CPU"                   // 底部标签
-  sub2="45°C"                 // 底部第二行（可选）
-  sub2Color="var(--mcha-amber)" // 第二行颜色（可选）
-/>
-```
-
-### AnimatedNumber
-
-带过渡动画的数值显示。
-
-```tsx
-import { AnimatedNumber } from "../../components/AnimatedNumber";
-
-<AnimatedNumber
-  value={12345}
-  format={(n) => n.toLocaleString()}  // 可选格式化函数
-  duration={500}                       // 动画时长 ms，默认 500
-/>
-```
-
-### ProgressBar
-
-水平进度条。
-
-```tsx
-import { ProgressBar } from "../../components/ProgressBar";
-
-<ProgressBar
-  value={0.85}               // 0-1
-  color="var(--mcha-green)"
-  label="85%"                // 可选文字标签
-/>
-```
-
-### StatCard
-
-指标卡片，显示标签、数值和可选的副文字。
-
-```tsx
-import { StatCard } from "../../components/StatCard";
-
-<StatCard label="请求数" value="12.5K" sub="过去 24 小时" />
-```
-
-### MetricRow
-
-单行指标显示。
-
-```tsx
-import { MetricRow } from "../../components/MetricRow";
-
-<MetricRow label="成功率" value="99.8%" />
-```
-
-### Toggle
-
-开关切换。
-
-```tsx
-import { Toggle } from "../../components/Toggle";
-
-<Toggle
-  checked={enabled}
-  onChange={setEnabled}
-  label="启用通知"   // 可选
-/>
-```
-
-### EmptyState
-
-空状态/加载中占位。
-
-```tsx
-import { EmptyState } from "../../components/EmptyState";
-
-<EmptyState message="暂无数据" />
-```
-
----
-
-## 格式化工具函数
-
-`src/lib/format.ts` 提供常用的数据格式化：
-
-```ts
-import { fmtNumber, fmtMs, fmtBytes, fmtHz, fmtPercent, fmtUptime } from "../../lib/format";
-
-fmtNumber(1234567)      // "1.2M"
-fmtMs(1500)             // "1.5s"
-fmtBytes(1048576)       // "1.0 MB"
-fmtHz(3600000000)       // "3.60 GHz"
-fmtPercent(0.85)        // "85.0%"
-fmtUptime("2024-01-01T00:00:00Z")  // "3h42m"
-```
-
----
-
-## 状态管理
-
-### 基础模式：useState + useEffect
-
-大多数插件使用标准 React hooks 即可：
-
-```tsx
-const [data, setData] = useState<MyData[]>([]);
-const [loading, setLoading] = useState(true);
-
 useEffect(() => {
-  setLoading(true);
-  fetchData()
-    .then(setData)
-    .catch(console.error)
-    .finally(() => setLoading(false));
-}, []);
+  let unlisten: (() => void) | undefined;
+  listen("plugin://updated", () => refresh()).then((fn) => { unlisten = fn; });
+  return () => unlisten?.();
+}, [refresh]);
 ```
 
-### 避免闭包陈旧：useRef
+### 乐观更新
 
-当回调中需要访问最新状态但依赖数组不想包含该状态时：
-
-```tsx
-const statusRef = useRef<GitStatus | null>(null);
-const [status, setStatus] = useState<GitStatus | null>(null);
-
-// 同步到 ref
-useEffect(() => { statusRef.current = status; }, [status]);
-
-// 在回调中使用 ref 获取最新值
-const handleEvent = useCallback(() => {
-  const current = statusRef.current;  // 总是最新的
-  // ...
-}, []);  // 依赖数组为空，不会因 status 变化而重建
-```
-
-Git 插件大量使用此模式（`selectedFileRef`、`statusRef`、`watchedRepoRef`）。
-
-### 复杂状态：useReducer
-
-当状态逻辑涉及多个相互依赖的值时：
+适合 UI 操作后立即反馈，再等待后端确认：
 
 ```tsx
-const [state, dispatch] = useReducer(reducer, initialState);
-```
-
-目前没有现有插件使用此模式，但对于表单密集型插件可能更合适。
-
----
-
-## 错误处理
-
-### 推荐模式
-
-```tsx
-const [error, setError] = useState<string | null>(null);
-
-const handleAction = async () => {
+const toggle = async () => {
+  setEnabled((value) => !value);
   try {
-    setError(null);
-    await doAction();
-    showResult("操作成功");
-  } catch (e) {
-    const msg = String(e);
-    setError(msg);
-    showError(msg);
+    await saveEnabled(!enabled);
+  } catch (error) {
+    setEnabled(enabled);
+    setError(String(error));
   }
 };
 ```
 
-### invoke 错误
+## 组件组织
 
-Rust 命令返回 `Err(String)` 时，`invoke()` 的 Promise 会 reject，错误信息为 Rust 端传入的字符串。
+简单插件：
 
----
+```text
+src/addons/example/
+  manifest.json
+  index.tsx
+  ExamplePanel.tsx
+  api.ts
+  styles.css
+```
+
+复杂插件：
+
+```text
+src/addons/git/
+  components/
+    CommitTree.tsx
+    DiffViewer.tsx
+    GitConsole.tsx
+    GitTree.tsx
+  GitPanel.tsx
+  api.ts
+  types.ts
+  styles.css
+```
+
+拆分原则：
+
+- 面板文件负责数据流和页面布局。
+- 子组件负责展示或局部交互。
+- API 调用集中在 `api.ts`。
+- 共享类型集中在 `types.ts`。
+
+## CSS 命名
+
+每个插件使用自己的 class 前缀：
+
+| 插件 | 前缀示例 |
+| --- | --- |
+| `git` | `.git-panel`、`.git-tree` |
+| `system-monitor` | `.system-monitor-panel` |
+| `clipboard-history` | `.clipboard-history-panel` |
+| `music-player` | `.music-player-panel` |
+| `page-notes` | `.page-notes-panel` |
+| `amkr` | `.amkr-panel` |
+
+不要写宽泛选择器，例如 `button {}`、`.row {}`、`.panel {}`。必要时限制在插件根节点下。
+
+## 共享组件
+
+可复用组件位于 `src/components/`：
+
+- `AnimatedNumber`
+- `EmptyState`
+- `MetricRow`
+- `ProgressBar`
+- `RadialGauge`
+- `StatCard`
+- `Toggle`
+
+使用共享组件时保持 props 简单，不要把插件业务逻辑塞进通用组件。
+
+## 状态管理
+
+### 基础模式
+
+```tsx
+const [data, setData] = useState<Data | null>(null);
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
+```
+
+### 避免闭包陈旧
+
+```tsx
+const selectedIdRef = useRef(selectedId);
+useEffect(() => {
+  selectedIdRef.current = selectedId;
+}, [selectedId]);
+```
+
+适合 interval、watcher callback、事件监听中读取最新状态。
+
+### 复杂状态
+
+表单密集或状态转移复杂时使用 `useReducer`，但不要为了简单 toggle 引入 reducer。
+
+## 错误处理
+
+推荐前端错误模式：
+
+```tsx
+try {
+  await action();
+  setError(null);
+} catch (error) {
+  setError(error instanceof Error ? error.message : String(error));
+}
+```
+
+推荐 Rust 错误模式：
+
+```rust
+.map_err(|e| format!("Failed to read settings: {e}"))?;
+```
+
+错误信息应包含失败动作，避免只返回 `e.to_string()`。
 
 ## 窗口交互
 
-### 窗口拖拽
+- 拖拽和标题栏由 `WidgetShell` 处理。
+- 关闭行为应通过 `setPluginVisible` 或 `onClose` 走宿主逻辑。
+- 插件不要自行创建或销毁主 widget 窗口。
+- 动态高度优先用 `useAutoResize` 或保存 `WindowState.height`。
 
-`WidgetShell` 已处理标题栏和空白区域的拖拽。如果你的组件中有交互元素（按钮、输入框等），确保它们不会意外触发拖拽——框架通过检查 `event.target` 的 `tagName` 和 `closest()` 来过滤。
+## 吸附与序列
 
-### 自动滚动
+吸附用于插件跟随前台窗口；序列用于多个插件共享一个位置并通过热键轮换。
 
-对于长列表（如 git log、剪贴板历史），使用 `overflow-y: auto` 实现滚动：
+序列中的插件：
 
-```tsx
-<div className="mp-list" style={{ maxHeight: "300px", overflowY: "auto" }}>
-  {items.map(item => <div key={item.id}>...</div>)}
-</div>
-```
+- 启动时会创建窗口。
+- 第一个默认显示，其余默认隐藏。
+- 切换时沿用当前可见插件的位置。
+- attach loop 会跳过序列窗口的位置管理，避免互相抢位置。
 
-### 自动滚动到底部
+开发插件时只需正确声明 `defaultAttachEnabled`、`defaultAttachRemember` 和 `defaultWhitelist`。
 
-控制台类组件通常需要自动滚动：
+## 性能建议
 
-```tsx
-const endRef = useRef<HTMLDivElement>(null);
+- 避免在 render 中做昂贵计算；使用 `useMemo`。
+- 大文本 diff 或日志列表应限制长度。
+- 网络请求和文件 IO 放在 Rust 或异步函数中。
+- 不要在高频 interval 中 setState 大对象。
+- 后端 watcher 和 WebSocket 应有去重或节流。
 
-useEffect(() => {
-  endRef.current?.scrollIntoView({ behavior: "smooth" });
-}, [logs.length]);
+## 安全建议
 
-return (
-  <div className="mp-console">
-    {logs.map((log, i) => <div key={i}>{log}</div>)}
-    <div ref={endRef} />
-  </div>
-);
-```
+- 对来自前端的路径、URL、命令参数做校验。
+- Git、shell、文件删除等危险动作必须范围明确。
+- 不要把 token、密钥、用户隐私写入日志。
+- 外部 URL 打开前应确保来源可信。
 
----
+## 发布前检查
 
-## WidgetSequence（挂件序列）
-
-多个插件可以共享同一个窗口位置，通过热键循环切换。这在管理页面中配置：
-
-1. 选择要加入序列的插件
-2. 设置序列切换热键（如 `Ctrl+Shift+Tab`）
-3. 按热键在序列中的插件之间切换
-
-序列中的第一个插件默认显示，其余隐藏。切换时隐藏当前、显示下一个。
-
-```ts
-import { setWidgetSequence, setSequenceHotkey } from "../../lib/api";
-
-// 设置序列
-await setWidgetSequence(["plugin-a", "plugin-b", "plugin-c"]);
-
-// 设置切换热键
-await setSequenceHotkey("ctrl+shift+tab");
-
-// 清除序列
-await setWidgetSequence([]);
-await setSequenceHotkey(null);
-```
-
-序列中的插件在 `WidgetShell` 中会：
-- 隐藏关闭按钮（防止误关）
-- 共享同一个窗口位置
-- 按热键循环显示
+- `manifest.json` 与 `index.tsx` 元数据一致。
+- 新增 Rust command 已注册。
+- 所有监听和定时器有 cleanup。
+- 插件样式不污染全局。
+- `npm run build` 通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml` 通过。

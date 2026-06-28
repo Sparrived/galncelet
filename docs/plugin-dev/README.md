@@ -1,259 +1,321 @@
-# Galncelet 插件开发指南
+# Galncelet 插件开发指南（人类版）
 
-Galncelet 是一个基于 Tauri 2 的桌面悬浮挂件系统。每个插件以独立的透明窗口运行，拥有自己的 UI 和后端逻辑。本指南帮助你从零开始创建自己的插件，并涵盖框架提供的所有能力。
+Galncelet 是一个基于 Tauri 2 + React 的桌面悬浮挂件系统。插件由两部分组成：
 
-## 架构概览
+- 前端插件：位于 `src/addons/<plugin-id>/`，提供 `manifest.json`、`index.tsx`、面板组件、样式和前端 API。
+- 后端插件：位于 `src-tauri/src/<rust_module>/`，提供 Tauri command、后台任务、状态管理或系统能力。
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                    Galncelet App                          │
-│                                                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│  │  Widget A   │  │  Widget B   │  │  Widget C   │ ...  │
-│  │ (独立窗口)   │  │ (独立窗口)   │  │ (独立窗口)   │      │
-│  │ widget-<id>  │  │ widget-<id>  │  │ widget-<id>  │      │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘      │
-│         ↑                ↑                ↑              │
-│  ┌──────────────────────────────────────────────┐        │
-│  │               WidgetShell (壳)                 │        │
-│  │  标题栏 · 拖拽 · 折叠 · 附着 · 吸附 · 右键菜单 │        │
-│  └──────────────────────────────────────────────┘        │
-│         ↑                                              │
-│  ┌──────────────────────────────────────────────┐      │
-│  │              Plugin Registry                  │      │
-│  │        registerPlugin / getPlugin             │      │
-│  └──────────────────────────────────────────────┘      │
-│         ↑                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
-│  │index.tsx │  │index.tsx │  │index.tsx │  ...        │
-│  │(插件 A)  │  │(插件 B)  │  │(插件 C)  │             │
-│  └──────────┘  └──────────┘  └──────────┘             │
-└──────────────────────────────────────────────────────────┘
-         ↕ Tauri IPC (invoke / listen / emit)
-┌──────────────────────────────────────────────────────────┐
-│                  Rust 后端 (Tauri 2)                     │
-│  #[tauri::command] · app.emit() · State<T> · build.rs   │
-└──────────────────────────────────────────────────────────┘
+应用启动时会自动加载所有 `src/addons/*/index.tsx` 前端插件；Tauri 构建时会由 `src-tauri/build.rs` 嵌入所有 `src/addons/*/manifest.json`，并自动发现 `src-tauri/src/*/mod.rs` 后端插件模块。
+
+## 目录结构
+
+推荐每个插件使用以下结构：
+
+```text
+src/addons/<plugin-id>/
+  manifest.json        # 插件元数据，会被 build.rs 嵌入到 Rust 侧
+  index.tsx            # 前端注册入口，必须调用 registerPlugin
+  <Panel>.tsx          # React 面板组件
+  api.ts               # invoke 封装（可选）
+  types.ts             # 前端类型（可选）
+  styles.css           # 插件样式（可选）
+
+src-tauri/src/<rust_module>/
+  mod.rs               # Rust 后端插件入口，必须提供 pub fn setup(app: &tauri::AppHandle)
 ```
 
-### 核心概念
+当前内置插件包括：
 
-| 概念 | 说明 |
-|------|------|
-| **Addon（插件）** | 前端逻辑单元——`src/addons/<id>/` 下的一个目录，包含 manifest、组件、API、样式 |
-| **Widget（挂件）** | 运行时实体——一个 Tauri 原生窗口，由 `widget-<id>` 标签标识 |
-| **WidgetShell** | 框架提供的窗口壳——标题栏、拖拽、折叠、附着、吸附、右键菜单 |
-| **Registry（注册表）** | 前端全局 `Map<string, PluginDef>`，由 `registerPlugin()` 填充 |
-| **Rust Module** | 后端逻辑单元——`src-tauri/src/<id>/mod.rs`，包含 `setup()` 和 `#[tauri::command]` |
-| **_plugins.rs** | `build.rs` 自动生成的胶水文件——插件 mod 声明 + `setup_all()` 调用 |
+| 插件 ID | 前端目录 | 后端模块 | 说明 |
+| --- | --- | --- | --- |
+| `git` | `src/addons/git` | `src-tauri/src/git` | Git 状态、diff、提交、分支、远程仓库、watcher |
+| `system-monitor` | `src/addons/system-monitor` | `src-tauri/src/system_monitor` | CPU、GPU、内存、磁盘、网络指标 |
+| `clipboard-history` | `src/addons/clipboard-history` | `src-tauri/src/clipboard_history` | 剪贴板历史、搜索、回填、持久化 |
+| `page-notes` | `src/addons/page-notes` | `src-tauri/src/page_notes` | 按浏览器页面 URL 匹配笔记，包含浏览器扩展资源 |
+| `music-player` | `src/addons/music-player` | `src-tauri/src/music_player` | 系统媒体会话、播放控制、歌词 |
+| `amkr` | `src/addons/amkr` | `src-tauri/src/amkr` | AMKR 指标、模型设置、事件 WebSocket |
 
-### 加载流程
+> 注意：前端插件 ID 可以包含短横线；Rust 模块名必须是合法 Rust 标识符，通常用下划线，例如 `system-monitor` 对应 `system_monitor`。
 
-```
-启动阶段（build.rs，编译时）
-  ├── 扫描 src/addons/*/manifest.json → 嵌入编译产物
-  └── 扫描 src-tauri/src/<id>/mod.rs  → 生成 _plugins.rs
-         ├── mod amkr;
-         ├── mod clipboard_history;
-         └── ...
-         └── pub fn setup_all(app) { amkr::setup(app); ... }
+## 插件生命周期
 
-启动阶段（main.rs，运行时）
-  ├── _plugins::setup_all(&handle)     → 初始化所有插件后端
-  ├── plugins::load_manifests()        → 读取嵌入的 manifest
-  ├── 为每个 manifest 创建 widget 窗口 → create_widget_window()
-  └── tray::setup(app, &manifests)     → 构建托盘菜单
+1. `src-tauri/build.rs` 扫描 `src/addons/*/manifest.json`，把 manifest 编译进 Rust 二进制。
+2. `src-tauri/build.rs` 扫描 `src-tauri/src/*/mod.rs`，生成 `src-tauri/src/_plugins.rs`，并调用每个模块的 `setup(app)`。
+3. `src/App.tsx` 使用 `import.meta.glob("./addons/*/index.tsx")` 动态导入所有前端插件入口。
+4. 每个 `index.tsx` 调用 `registerPlugin(def)` 写入前端插件注册表。
+5. 主进程根据用户设置和 manifest 创建 `widget-<plugin-id>` 窗口。
+6. 插件面板渲染在 `WidgetShell` 内，获得关闭、折叠、吸附、记忆位置、右键菜单等通用能力。
 
-前端加载（App.tsx，运行时）
-  ├── import.meta.glob("./addons/*/index.tsx")  → Vite 构建时发现
-  ├── Promise.all 动态导入所有插件模块
-  ├── 每个 index.tsx 执行 registerPlugin()       → 注册到全局 Map
-  └── 根据窗口标签 widget-<id> 查找 PluginDef
-        └── <WidgetShell><Component /></WidgetShell>
-```
+## manifest.json
 
-### 自动发现机制
-
-**前端**：Vite 的 `import.meta.glob("./addons/*/index.tsx")` 在构建时自动发现 `src/addons/` 下所有子目录的 `index.tsx`。运行时通过 `Promise.all` 动态导入，无需手动注册。
-
-**后端**：`build.rs` 扫描 `src-tauri/src/` 下所有包含 `mod.rs` 的子目录（排除 `acrylic`、`plugins`、`settings`、`tray`、`window_attach` 等框架模块），自动生成：
-- `mod <id>;` 声明（带 `#[path = "<id>/mod.rs"]`）
-- `setup_all()` 函数，依次调用每个插件的 `setup(app)`
-- manifest 嵌入代码
-
-**你不需要**：
-- 在 `main.rs` 中写 `mod my_plugin;`
-- 在 `main.rs` 中写 `my_plugin::setup(app);`
-- 手动更新 `_plugins.rs`（它会被覆盖）
-
-**你仍然需要**：
-- 在 `main.rs` 的 `generate_handler![]` 中注册你的 `#[tauri::command]` 函数
-- 创建 `src-tauri/src/<id>/mod.rs` 文件
-
-## 插件目录结构
-
-```
-src/addons/my-plugin/                    ← 前端插件目录
-├── index.tsx                            # 入口：import manifest + component，调用 registerPlugin()
-├── manifest.json                        # 插件元数据和窗口配置
-├── types.ts                             # TypeScript 接口（IPC 数据结构）
-├── api.ts                               # Tauri invoke() 封装函数
-├── MyPluginPanel.tsx                    # 主面板组件
-├── styles.css                           # 插件专属样式
-└── components/                          # 可选：子组件
-    └── SubWidget.tsx
-
-src-tauri/src/my-plugin/                 ← 后端插件目录
-└── mod.rs                               # setup() + #[tauri::command] 函数
-```
-
-### 各文件职责
-
-| 文件 | 职责 | 必须 |
-|------|------|------|
-| `src/addons/my-plugin/index.tsx` | 导入 manifest + 组件，调用 `registerPlugin()` | ✅ |
-| `src/addons/my-plugin/manifest.json` | 声明 id、title、icon、尺寸、按钮、附着配置 | ✅ |
-| `src/addons/my-plugin/MyPluginPanel.tsx` | 渲染挂件内容，管理状态和交互 | ✅ |
-| `src/addons/my-plugin/styles.css` | 插件专属样式 | ✅ |
-| `src/addons/my-plugin/types.ts` | IPC 数据结构的 TypeScript 接口 | 推荐 |
-| `src/addons/my-plugin/api.ts` | 封装 `invoke()` 调用 | 推荐 |
-| `src-tauri/src/my-plugin/mod.rs` | 后端 `setup()` + `#[tauri::command]` | 需要后端时 |
-| `src-tauri/src/main.rs` | 在 `generate_handler![]` 中注册命令 | 需要后端时 |
-
-## 最小插件示例
-
-一个最简单的插件只需要 4 个文件（纯前端，无 Rust 后端）：
-
-### 1. manifest.json
+`manifest.json` 是插件对宿主的声明。示例：
 
 ```json
 {
-  "id": "hello",
-  "title": "Hello World",
-  "description": "最小示例插件",
-  "icon": "👋",
-  "defaultWidth": 240,
-  "defaultHeight": 100
+  "id": "example",
+  "title": "示例插件",
+  "description": "展示插件开发的最小结构",
+  "icon": "🧩",
+  "defaultWidth": 360,
+  "defaultHeight": 320,
+  "showCloseButton": true,
+  "showCollapseButton": true,
+  "showAttachButton": true,
+  "defaultAttachEnabled": true,
+  "defaultAttachRemember": false,
+  "defaultWhitelist": []
 }
 ```
 
-### 2. HelloPanel.tsx
+字段说明：
 
-```tsx
-import { useRef } from "react";
-import { useAutoResize } from "../../widgets/useAutoResize";
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | 插件唯一 ID；同时用于窗口 query、设置 key、窗口标签后缀 `widget-<id>` |
+| `title` | `string` | 是 | 面板标题和管理页显示名 |
+| `description` | `string` | 否 | 管理页中的简短说明 |
+| `icon` | `string` | 否 | 管理页显示的 emoji 或短文本图标 |
+| `defaultWidth` | `number` | 否 | 默认窗口宽度，逻辑像素，默认 360 |
+| `defaultHeight` | `number` | 否 | 默认窗口高度，逻辑像素，默认 600 |
+| `showCloseButton` | `boolean` | 否 | 是否显示关闭按钮，默认 true |
+| `showCollapseButton` | `boolean` | 否 | 是否显示折叠按钮，默认 true |
+| `showAttachButton` | `boolean` | 否 | 是否显示吸附按钮，默认 true |
+| `defaultAttachEnabled` | `boolean` | 否 | 是否默认吸附到前台窗口，默认 true |
+| `defaultAttachRemember` | `boolean` | 否 | 是否只记忆显示/隐藏而不移动位置，默认 false |
+| `defaultWhitelist` | `string[]` | 否 | 默认吸附白名单，匹配前台窗口标题或进程名片段；空数组表示不限制 |
 
-export default function HelloPanel() {
-  const ref = useRef<HTMLDivElement>(null);
-  useAutoResize(ref);
+约束：
 
-  return (
-    <div ref={ref} style={{ padding: "16px", color: "var(--text-primary)" }}>
-      Hello, World!
-    </div>
-  );
-}
-```
+- `id` 必须稳定，发布后不要随意修改，否则用户设置会丢失。
+- `id` 建议使用小写字母、数字和短横线：`page-notes`、`music-player`。
+- manifest 必须是合法 JSON，不能有注释或尾随逗号。
+- manifest 中声明的窗口尺寸应覆盖常用内容，折叠状态由 `WidgetShell` 处理。
 
-### 3. index.tsx
+## 前端注册入口
+
+每个插件必须提供 `src/addons/<plugin-id>/index.tsx`：
 
 ```tsx
 import { registerPlugin } from "../registry";
-import HelloPanel from "./HelloPanel";
-import manifest from "./manifest.json";
 import "./styles.css";
+import ExamplePanel from "./ExamplePanel";
 
-registerPlugin({ ...manifest, component: HelloPanel });
+registerPlugin({
+  id: "example",
+  title: "示例插件",
+  description: "展示插件开发的最小结构",
+  icon: "🧩",
+  defaultWidth: 360,
+  defaultHeight: 320,
+  showCloseButton: true,
+  showCollapseButton: true,
+  showAttachButton: true,
+  defaultAttachEnabled: true,
+  defaultAttachRemember: false,
+  defaultWhitelist: [],
+  component: ExamplePanel,
+});
 ```
 
-### 4. styles.css
+前端注册字段与 manifest 基本一致，但额外需要 `component`。为了避免管理页和实际窗口表现不一致，`index.tsx` 中的元数据应与 `manifest.json` 保持一致。
 
-```css
-/* 最小插件可以为空 */
+## React 面板组件
+
+面板组件只负责内容区；标题栏、拖拽、关闭、折叠、吸附按钮由 `WidgetShell` 提供。
+
+```tsx
+import { useEffect, useState } from "react";
+import { getExampleData } from "./api";
+
+export default function ExamplePanel() {
+  const [message, setMessage] = useState("加载中...");
+
+  useEffect(() => {
+    getExampleData().then(setMessage).catch((error) => setMessage(String(error)));
+  }, []);
+
+  return <div className="example-panel">{message}</div>;
+}
 ```
 
-然后运行 `npm run tauri dev`，在管理页面启用插件即可。
+建议：
 
-## 现有插件一览
+- 使用插件目录内的 CSS class 前缀，例如 `.example-panel`，避免污染其他插件。
+- 定时刷新必须在 `useEffect` cleanup 中清理。
+- IPC 调用错误应在插件内友好展示，不要让 Promise rejection 泄漏到控制台。
+- 不要在插件组件中直接创建 Tauri 窗口；使用宿主提供的管理页和窗口生命周期。
 
-| 插件 | 说明 | 复杂度 | IPC 命令数 |
-|------|------|--------|-----------|
-| [system-monitor](../src/addons/system-monitor/) | CPU/GPU/内存/磁盘/网络监控 | ⭐ 简单 | 1 |
-| [clipboard-history](../src/addons/clipboard-history/) | 剪贴板历史记录与搜索 | ⭐ 简单 | 4 |
-| [page-notes](../src/addons/page-notes/) | 基于 URL 的页面笔记 | ⭐⭐ 中等 | 4 |
-| [amkr](../src/addons/amkr/) | LLM API 路由器实时仪表盘 | ⭐⭐ 中等 | 5 |
-| [music-player](../src/addons/music-player/) | SMTC 媒体播放器 + 歌词 | ⭐⭐ 中等 | 5 |
-| [git](../src/addons/git/) | 完整 Git 仓库管理 | ⭐⭐⭐ 复杂 | 18 |
+## 前端 API 封装
 
-## 框架能力速览
+插件前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令。推荐统一封装在插件自己的 `api.ts`：
 
-### 可用 Hooks
+```ts
+import { invoke } from "@tauri-apps/api/core";
 
-| Hook | 来源 | 用途 |
-|------|------|------|
-| `useAutoResize(ref)` | `src/widgets/useAutoResize` | 自动调整窗口大小适应内容 |
-| `useWidget()` | `src/lib/context` | 刷新、消息提示、状态通知 |
-| `useWidgetContextMenu(items)` | `src/widgets/WidgetContext` | 注册自定义右键菜单 |
-| `useWidgetContext()` | `src/widgets/WidgetContext` | 读取折叠状态等上下文 |
+export async function getExampleData(): Promise<string> {
+  return invoke<string>("get_example_data");
+}
+```
 
-详见 [可用 Hooks](hooks.md)。
+命令名必须与 Rust `#[tauri::command]` 函数名一致，并且该命令必须注册到 `src-tauri/src/main.rs` 的 `tauri::generate_handler![...]`。
 
-### 共享组件
+## Rust 后端插件
 
-`src/components/` 下提供 7 个可复用组件：`RadialGauge`、`AnimatedNumber`、`ProgressBar`、`StatCard`、`MetricRow`、`Toggle`、`EmptyState`。
+每个后端插件模块建议使用：
 
-详见 [常见模式](patterns.md#共享组件库)。
+```rust
+use std::sync::{Arc, Mutex};
 
-### 格式化工具
+#[derive(Default)]
+pub struct ExampleState {
+    value: Mutex<String>,
+}
 
-`src/lib/format.ts` 提供：`fmtNumber`、`fmtMs`、`fmtBytes`、`fmtHz`、`fmtPercent`、`fmtUptime`。
+pub fn setup(app: &tauri::AppHandle) {
+    app.manage(Arc::new(ExampleState::default()));
+}
 
-### 全局 CSS 变量
+#[tauri::command]
+pub fn get_example_data(state: tauri::State<'_, Arc<ExampleState>>) -> Result<String, String> {
+    state
+        .value
+        .lock()
+        .map(|value| value.clone())
+        .map_err(|_| "Example state lock poisoned".to_string())
+}
+```
 
-```css
---text-primary    /* 主文字色 #e4e4e7 */
---text-secondary  /* 次文字色 #a1a1aa */
---text-muted      /* 弱文字色 #71717a */
---glass-bg        /* 背景色 rgba(18,18,24,0.99) */
---glass-border    /* 边框色 rgba(255,255,255,0.08) */
---glass-highlight /* 高亮背景 rgba(255,255,255,0.04) */
---mcha-cyan       /* 强调色 #22d3ee */
---mcha-green      /* 成功色 #4ade80 */
---mcha-amber      /* 警告色 #fbbf24 */
---mcha-red        /* 错误色 #f87171 */
---mcha-surface    /* 表面色 rgba(255,255,255,0.03) */
---mcha-border     /* 表面边框 rgba(255,255,255,0.06) */
+约定：
+
+- `setup(app)` 必须存在，即使插件暂时不需要初始化，也应保留空函数。
+- 长任务不要阻塞 UI 线程；使用 `tauri::async_runtime::spawn` 或后台线程。
+- command 返回 `Result<T, String>`，错误信息应适合直接显示给用户。
+- 共享状态用 `app.manage(...)` 注入，前端调用时通过 `tauri::State` 获取。
+- Windows 专属能力必须加 `#[cfg(windows)]`，非 Windows 平台提供降级分支。
+
+## 注册后端命令
+
+`build.rs` 会自动生成模块声明和 `setup_all(app)`，但不会自动注册 command。新增 `#[tauri::command]` 后，需要手动加入 `src-tauri/src/main.rs`：
+
+```rust
+.invoke_handler(tauri::generate_handler![
+    example::get_example_data,
+])
+```
+
+如果插件 ID 为 `example-plugin`，Rust 模块通常叫 `example_plugin`，注册时使用 `example_plugin::command_name`。
+
+## 窗口与吸附能力
+
+宿主会为每个启用的插件创建一个透明、无边框、置顶、跳过任务栏的窗口，窗口标签为 `widget-<plugin-id>`。
+
+通用能力：
+
+- 关闭：隐藏窗口并更新插件可见性。
+- 折叠：保留标题栏高度或插件指定的折叠高度。
+- 吸附：跟随前台窗口移动和显示/隐藏。
+- 白名单：只在匹配的前台窗口标题或进程名中吸附。
+- 记忆位置：`defaultAttachRemember` 或用户按钮可切换只管理显示/隐藏。
+- 序列切换：全局设置可配置多个 widget 共用位置并用热键轮换。
+
+插件不应自行假设窗口大小、屏幕缩放或 DPI；需要尺寸时优先监听容器布局。
+
+## 设置与持久化
+
+全局设置类型在 `src/lib/types.ts` 和 `src-tauri/src/settings.rs` 中维护。插件可以使用两类持久化方式：
+
+- 宿主级设置：适合插件可见性、窗口位置、热键、吸附配置等通用数据。
+- 插件私有文件：适合插件业务数据，例如剪贴板历史、页面笔记、缓存。
+
+插件私有文件建议放在 Tauri app data 目录下：
+
+```rust
+let data_dir = app.path().app_data_dir()?;
+let path = data_dir.join("example.json");
+```
+
+## 事件通信
+
+如果后端需要主动通知前端，可以使用 Tauri event：
+
+```rust
+use tauri::Emitter;
+
+app.emit("example://updated", payload).map_err(|e| e.to_string())?;
+```
+
+前端监听时需在组件卸载时取消监听：
+
+```ts
+import { listen } from "@tauri-apps/api/event";
+
+useEffect(() => {
+  let unlisten: (() => void) | undefined;
+  listen("example://updated", (event) => {
+    console.log(event.payload);
+  }).then((fn) => { unlisten = fn; });
+  return () => unlisten?.();
+}, []);
+```
+
+## 浏览器扩展资源
+
+如果插件需要随包发布静态资源，可以把资源放入插件目录，并在 `src-tauri/tauri.conf.json` 的 `bundle.resources` 中配置。例如 `page-notes` 会打包：
+
+```json
+"resources": [
+  "../src/addons/page-notes/browser-extension/*"
+]
 ```
 
 ## 开发流程
 
-### 方式一：纯前端插件（无新 Rust 命令）
+1. 创建 `src/addons/<plugin-id>/manifest.json`。
+2. 创建 `src/addons/<plugin-id>/index.tsx` 并调用 `registerPlugin`。
+3. 创建面板组件、样式、前端 `api.ts`。
+4. 如需系统能力，创建 `src-tauri/src/<rust_module>/mod.rs` 并实现 `setup(app)`。
+5. 将新增 Tauri command 加入 `src-tauri/src/main.rs` 的 `generate_handler!`。
+6. 运行 `npm run build` 检查前端类型和 Vite 构建。
+7. 运行 `cargo check` 或 `npm run tauri -- build --target x86_64-pc-windows-msvc` 检查后端。
+8. 打开管理页启用插件，验证窗口、关闭、折叠、吸附、设置持久化。
 
-如果你的插件只使用现有的 Tauri 命令，或纯前端逻辑：
+## 发布与版本
 
-1. 创建 `src/addons/my-plugin/` 目录
-2. 编写 `manifest.json`
-3. 编写 Panel 组件和样式
-4. 编写 `index.tsx` 注册
-5. `npm run tauri dev` 运行
+当前发布流程位于：
 
-### 方式二：需要新 Rust 命令
+- `scripts/release.ps1`
+- `.github/workflows/release.yml`
 
-1. 创建 `src-tauri/src/my-plugin/mod.rs`，定义 `setup()` 和 `#[tauri::command]` 函数
-2. `build.rs` 会自动生成 `_plugins.rs`，添加 `mod my-plugin;` 声明和 `setup()` 调用
-3. 在 `src-tauri/src/main.rs` 的 `generate_handler![]` 中注册你的命令
-4. 创建前端 `types.ts` 和 `api.ts`
-5. 编写 Panel 组件
-6. 注册插件并运行
+发布脚本会：
 
-详见 [快速开始教程](quickstart.md) 和 [Rust 后端集成](backend.md)。
+1. 可选同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 版本。
+2. 执行 `npm ci`。
+3. 执行 `npm run tauri -- build --target x86_64-pc-windows-msvc`。
+4. 校验 Windows GUI subsystem，避免发布版弹出控制台窗口。
+5. 生成 `src-tauri/target/release/bundle/SHA256SUMS.txt`。
+6. 可选通过 GitHub CLI 发布到 GitHub Releases。
 
-## 文档索引
+本项目的更新检查器读取 GitHub Releases latest release，并用 `v*` tag 与当前应用版本比较。因此发布新版本时必须创建形如 `v1.0.0` 的 tag/release，并确保应用内版本号同步。
 
-| 文档 | 内容 |
-|------|------|
-| [快速开始](quickstart.md) | 从零创建番茄钟插件的完整教程 |
-| [manifest.json 参考](manifest.md) | 所有 manifest 字段的详细说明 |
-| [可用 Hooks](hooks.md) | useAutoResize、useWidget、useWidgetContextMenu 详解 |
-| [Rust 后端集成](backend.md) | Tauri 命令定义、注册、事件系统、数据持久化 |
-| [常见模式](patterns.md) | 轮询/事件驱动、子组件组织、CSS 规范、共享组件 |
+常用命令：
+
+```powershell
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+npm run release -- -Version 1.0.0 -Tag v1.0.0
+npm run release:publish -- -Version 1.0.0 -Tag v1.0.0
+```
+
+## 质量检查清单
+
+提交插件前请确认：
+
+- `manifest.json` 与 `index.tsx` 元数据一致。
+- 插件 ID 稳定且唯一。
+- 所有 `invoke` 都有对应 Rust command，并已注册 handler。
+- 所有定时器、监听器、WebSocket、文件 watcher 都有 cleanup 或停止逻辑。
+- Rust command 不会长时间阻塞 UI。
+- 错误信息可读，并能被前端展示。
+- 样式 class 使用插件前缀，避免影响宿主或其他插件。
+- Windows 专属功能有 `#[cfg(windows)]` 或降级分支。
+- `npm run build` 和 `cargo check` 通过。

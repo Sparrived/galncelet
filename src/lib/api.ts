@@ -73,6 +73,23 @@ export async function setHideInFullscreen(enabled: boolean): Promise<void> {
   return invoke<void>("set_hide_in_fullscreen", { enabled });
 }
 
+export async function setStartOnBoot(enabled: boolean): Promise<void> {
+  return invoke<void>("set_start_on_boot", { enabled });
+}
+export interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string | null;
+  latestTag: string | null;
+  releaseName: string | null;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  hasUpdate: boolean;
+}
+
+export async function checkForUpdates(): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>("check_for_updates");
+}
+
 export interface WindowEntry {
   title: string;
   process: string;

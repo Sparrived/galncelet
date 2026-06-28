@@ -1,117 +1,99 @@
-# Plugin Schema Reference
+# Galncelet 插件 Schema 与接口参考（AI 版）
 
-> Concise type definitions, interfaces, and APIs for building Galncelet plugins.
-> Target audience: AI coding agents. No prose, just types and signatures.
+本文件定义插件 manifest、前端 registry、窗口状态、Tauri command 和发布相关约定。AI 生成插件时应以此为准。
 
-## PluginDef Interface
+## Manifest Schema
 
-```ts
-// src/addons/registry.ts
-interface PluginDef {
-  id: string;                    // Unique ID, used as settings key & window label suffix
-  title: string;                 // Display title in header & management page
-  description?: string;          // Short description for management page
-  icon?: string;                 // Emoji icon for management page
-  collapsedHeight?: number;      // Height when collapsed (logical px). 0 = hide entirely
-  defaultWidth?: number;         // Default window width (logical px)
-  defaultHeight?: number;        // Default window height (logical px)
-  showCloseButton?: boolean;     // Header close button (default: true)
-  showCollapseButton?: boolean;  // Header collapse button (default: true)
-  showAttachButton?: boolean;    // Header attach-to-foreground toggle (default: true)
-  defaultAttachEnabled?: boolean;// Attach to foreground by default (default: true)
-  defaultAttachRemember?: boolean;// "Remember position" mode default (default: false)
-  defaultWhitelist?: string[];   // Window title substrings to restrict attachment
-  component: FC;                 // React functional component (the widget content)
-}
-```
-
-## Registry API
+文件位置：`src/addons/<plugin-id>/manifest.json`
 
 ```ts
-// src/addons/registry.ts
-function registerPlugin(def: PluginDef): void;  // Call at module load time (side-effect import)
-function getPlugin(id: string): PluginDef | undefined;
-function getAllPlugins(): PluginDef[];
-```
-
-## WidgetContext (app-level, from src/lib/context.tsx)
-
-```ts
-interface WidgetContext {
-  refresh: () => Promise<void>;           // Trigger full data refresh (currently no-op)
-  showResult: (msg: string) => void;      // Show transient success message (console.log)
-  showError: (msg: string) => void;       // Show transient error message (console.error)
-  onStatusChange: (status: string | null) => void; // Update window subtitle
-}
-function useWidget(): WidgetContext;
-```
-
-## WidgetContextValue (shell-level, from src/widgets/WidgetContext.ts)
-
-```ts
-export const HEADER_H = 36;  // Widget header height (logical px)
-
-interface ContextMenuItem {
-  label: string;
+interface PluginManifest {
+  id: string;
+  title: string;
+  description?: string;
   icon?: string;
-  onClick: () => void;
-  danger?: boolean;  // Red styling
+  defaultWidth?: number;
+  defaultHeight?: number;
+  showCloseButton?: boolean;
+  showCollapseButton?: boolean;
+  showAttachButton?: boolean;
+  defaultAttachEnabled?: boolean;
+  defaultAttachRemember?: boolean;
+  defaultWhitelist?: string[];
 }
+```
 
-interface WidgetContextValue {
-  collapsed: boolean;
-  contextMenuItems: ContextMenuItem[];
-  registerContextMenuItems: (items: ContextMenuItem[]) => void;
+默认值由宿主在窗口创建和 `WidgetShell` 中处理：
+
+| 字段 | 默认值 | 用途 |
+| --- | --- | --- |
+| `defaultWidth` | `360` | 初次创建窗口宽度 |
+| `defaultHeight` | `600` | 初次创建窗口高度 |
+| `showCloseButton` | `true` | 标题栏关闭按钮 |
+| `showCollapseButton` | `true` | 标题栏折叠按钮 |
+| `showAttachButton` | `true` | 标题栏吸附按钮 |
+| `defaultAttachEnabled` | `true` | 初始是否吸附前台窗口 |
+| `defaultAttachRemember` | `false` | 初始是否只记忆显示/隐藏 |
+| `defaultWhitelist` | `[]` | 初始吸附白名单，空表示不限制 |
+
+### JSON 示例
+
+```json
+{
+  "id": "system-monitor",
+  "title": "系统监控",
+  "description": "实时监控主机 CPU、GPU、内存、磁盘、网络等性能指标",
+  "icon": "🖥️",
+  "defaultWidth": 320,
+  "defaultHeight": 150,
+  "showCloseButton": true,
+  "showCollapseButton": true,
+  "showAttachButton": false,
+  "defaultAttachEnabled": false,
+  "defaultWhitelist": []
 }
-function useWidgetContext(): WidgetContextValue;
-function useWidgetContextMenu(items: ContextMenuItem[]): void; // Auto-unregisters on unmount
 ```
 
-## Hooks
+## Frontend Registry Schema
 
-### useAutoResize
+文件位置：`src/addons/registry.ts`
 
 ```ts
-// src/widgets/useAutoResize.ts
-function useAutoResize(containerRef: React.RefObject<HTMLElement | null>): void;
+import type { FC } from "react";
+
+interface PluginDef {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  collapsedHeight?: number;
+  defaultWidth?: number;
+  defaultHeight?: number;
+  showCloseButton?: boolean;
+  showCollapseButton?: boolean;
+  showAttachButton?: boolean;
+  defaultAttachEnabled?: boolean;
+  defaultAttachRemember?: boolean;
+  defaultWhitelist?: string[];
+  component: FC;
+}
 ```
 
-Auto-resizes the Tauri window to fit content. Uses `ResizeObserver` + `MutationObserver`. Adds `HEADER_H` (36px) to measured content height. Has 4px deadband. Uses `requestAnimationFrame` for throttling.
+`collapsedHeight` 目前只存在于前端 registry，用于内容折叠高度扩展；manifest 中没有该字段时不要强行添加。
 
-```tsx
-const containerRef = useRef<HTMLDivElement>(null);
-useAutoResize(containerRef);
-return <div ref={containerRef}>...</div>;
-```
-
-### useWidget
+注册函数：
 
 ```ts
-// src/lib/context.tsx
-const { refresh, showResult, showError, onStatusChange } = useWidget();
+registerPlugin(def: PluginDef): void
+getPlugin(id: string): PluginDef | undefined
+getAllPlugins(): PluginDef[]
 ```
 
-### useWidgetContextMenu
+## App Settings Schema
+
+文件位置：`src/lib/types.ts`
 
 ```ts
-// src/widgets/WidgetContext.ts
-useWidgetContextMenu([
-  { label: "Refresh", icon: "🔄", onClick: () => refresh() },
-  { label: "Clear", icon: "🗑️", danger: true, onClick: () => clear() },
-]);
-```
-
-### useWidgetContext
-
-```ts
-// src/widgets/WidgetContext.ts
-const { collapsed, contextMenuItems, registerContextMenuItems } = useWidgetContext();
-```
-
-## AppSettings & WindowState
-
-```ts
-// src/lib/types.ts
 interface WindowState {
   x?: number;
   y?: number;
@@ -122,166 +104,193 @@ interface WindowState {
 }
 
 interface AppSettings {
-  refreshIntervalMs: number;    // default: 2000
-  cardWidth: number;            // default: 360
-  logMaxCount: number;          // default: 50
-  alwaysOnTop: boolean;         // default: true
-  pullRebase: boolean;          // default: true
+  refreshIntervalMs: number;
+  cardWidth: number;
+  logMaxCount: number;
+  alwaysOnTop: boolean;
+  startOnBoot: boolean;
+  pullRebase: boolean;
   savedRepos: string[];
   currentRepo?: string;
   panelVisibility: Record<string, boolean>;
   windowStates: Record<string, WindowState>;
-  hideFullscreen: boolean;      // default: true
+  hideFullscreen: boolean;
   pluginHotkeys: Record<string, string>;
   widgetSequence: string[];
   sequenceHotkey: string | null;
 }
-
-export const DEFAULT_SETTINGS: AppSettings = {
-  refreshIntervalMs: 2000,
-  cardWidth: 360,
-  logMaxCount: 50,
-  alwaysOnTop: true,
-  pullRebase: true,
-  savedRepos: [],
-  panelVisibility: {},
-  windowStates: {},
-  hideFullscreen: true,
-  pluginHotkeys: {},
-  widgetSequence: [],
-  sequenceHotkey: null,
-};
 ```
 
-## WidgetShell Props
+插件窗口状态保存在 `windowStates[pluginId]`，不要直接用窗口 label 作为 key，除非调用宿主 API 要求 `windowLabel`。
 
-```ts
-// src/widgets/WidgetShell.tsx
-interface WidgetShellProps {
-  title: ReactNode;
-  children: ReactNode;
-  headerRight?: ReactNode;
-  showCloseButton?: boolean;      // default: true
-  showCollapseButton?: boolean;   // default: true
-  showAttachButton?: boolean;     // default: true
-  defaultAttachEnabled?: boolean; // default: true
-  defaultAttachRemember?: boolean;// default: false
-  defaultWhitelist?: string[];    // default: []
-  onClose?: () => void;
-}
-```
+## Window Labels and URLs
 
-## Tauri IPC Bridge (frontend api.ts)
+| 概念 | 格式 |
+| --- | --- |
+| 插件 ID | `<plugin-id>` |
+| 插件窗口标签 | `widget-<plugin-id>` |
+| 插件 URL | `index.html?widget=<plugin-id>` |
+| 管理页标签 | `manage` |
+| 设置页标签 | `settings` |
+| 插件设置页标签 | `settings-<plugin-id>` |
 
-```ts
-// src/lib/api.ts
-function loadSettings(): Promise<AppSettings>;
-function saveSettings(settings: AppSettings): Promise<void>;
-function setPluginVisible(pluginId: string, visible: boolean): Promise<void>;
-function updateCardWidth(width: number): Promise<void>;
-function setBodyCollapsed(windowLabel: string, height: number | null, expandHeight?: number): Promise<void>;
-function setAttachEnabled(windowLabel: string, enabled: boolean): Promise<void>;
-function createPluginWindow(pluginId: string, title: string, width: number, height: number,
-  defaultAttachEnabled?: boolean, defaultAttachRemember?: boolean, defaultWhitelist?: string[]): Promise<void>;
-function openManageWindow(): Promise<void>;
-function openSettingsWindow(): Promise<void>;
-function openPluginSettings(pluginId: string): Promise<void>;
-function saveWindowState(windowId: string, state: WindowState): Promise<void>;
-function setAttachWhitelist(windowLabel: string, patterns: string[]): Promise<void>;
-function setAttachRemember(windowLabel: string, remember: boolean): Promise<void>;
-function setHideInFullscreen(enabled: boolean): Promise<void>;
-function listVisibleWindows(): Promise<WindowEntry[]>;
-function setPluginHotkey(pluginId: string, hotkey: string | null): Promise<void>;
-function setWidgetSequence(sequence: string[]): Promise<void>;
-function setSequenceHotkey(hotkey: string | null): Promise<void>;
-```
+`src/App.tsx` 会根据 query `widget` 或当前窗口 label 推导插件 ID。
 
-## Shared Components
+## Tauri Commands
 
-All in `src/components/`:
+### 宿主通用命令
 
-| Component | Props | Usage |
-|-----------|-------|-------|
-| `RadialGauge` | `value: number, label: string, color: string, sub: string, sub2?: string, sub2Color?: string` | Circular gauge chart |
-| `AnimatedNumber` | `value: number, format?: (n: number) => string, duration?: number` | Number with counting animation |
-| `ProgressBar` | `value: number, color: string, label?: string` | Horizontal progress bar |
-| `StatCard` | `label: string, value: string, sub?: string` | Metric card with label/value/sub |
-| `MetricRow` | `label: string, value: string` | Single-row metric display |
-| `Toggle` | `checked: boolean, onChange: (v: boolean) => void, label?: string` | Toggle switch |
-| `EmptyState` | `message: string` | Empty/loading state placeholder |
+前端封装：`src/lib/api.ts`
 
-## Format Utilities
+| 命令 | 用途 |
+| --- | --- |
+| `load_settings` / `save_settings` | 读取/保存全局设置 |
+| `set_plugin_visible` | 设置插件窗口可见性 |
+| `create_plugin_window` | 创建或显示插件窗口 |
+| `open_manage_window` | 打开管理页 |
+| `open_settings_window` | 打开全局设置页 |
+| `open_plugin_settings` | 打开插件设置页 |
+| `save_window_state` | 保存窗口位置、高度、吸附配置 |
+| `set_attach_enabled` | 设置窗口吸附开关 |
+| `set_attach_whitelist` | 设置吸附白名单 |
+| `set_attach_remember` | 设置吸附记忆模式 |
+| `set_hide_in_fullscreen` | 设置全屏时隐藏挂件 |
+| `set_start_on_boot` | 设置 Windows 登录自启动 |
+| `list_visible_windows` | 获取可见窗口列表 |
+| `set_plugin_hotkey` | 设置插件显示/隐藏热键 |
+| `set_widget_sequence` | 设置轮换插件序列 |
+| `set_sequence_hotkey` | 设置轮换热键 |
+| `check_for_updates` | 检查 GitHub Releases 新版本 |
 
-All in `src/lib/format.ts`:
+### 插件命令
 
-| Function | Signature | Example |
-|----------|-----------|---------|
-| `fmtNumber` | `(n: number) => string` | `1234567 → "1.2M"` |
-| `fmtMs` | `(ms: number) => string` | `1500 → "1.5s"` |
-| `fmtBytes` | `(bytes: number) => string` | `1048576 → "1.0 MB"` |
-| `fmtHz` | `(hz: number) => string` | `3600000000 → "3.60 GHz"` |
-| `fmtPercent` | `(v: number) => string` | `0.85 → "85.0%"` |
-| `fmtUptime` | `(startedAt: string) => string` | ISO timestamp → `"3h42m"` |
+当前插件命令按模块注册在 `src-tauri/src/main.rs`：
 
-## CSS Variables (global theme)
+| 模块 | 命令 |
+| --- | --- |
+| `git` | `get_status`、`get_file_diff`、`exec_git_command`、`stage_file`、`stage_all`、`unstage_file`、`discard_file`、`untrack_file`、`commit`、`pull`、`push`、`git_fetch`、`list_branches`、`checkout_branch`、`git_log`、`list_submodules`、`list_remotes`、`add_remote`、`remove_remote`、`watch_git_repo`、`unwatch_git_repo` |
+| `system_monitor` | `fetch_system_metrics` |
+| `clipboard_history` | `get_clipboard_history`、`copy_to_clipboard`、`delete_clipboard_entry`、`clear_clipboard_history` |
+| `page_notes` | `load_page_notes`、`save_page_notes`、`get_ws_port` |
+| `browser_ext` | `open_extension_dir`、`launch_browser_with_extension` |
+| `music_player` | `get_media_info`、`media_control`、`get_media_sessions`、`select_media_session`、`get_lyrics` |
+| `amkr` | `fetch_amkr_metrics`、`generate_commit_message`、`get_amkr_models`、`set_amkr_unified_model`、`start_amkr_ws`、`stop_amkr_ws` |
 
-```css
---glass-bg: rgba(18, 18, 24, 0.99)
---glass-border: rgba(255, 255, 255, 0.08)
---glass-highlight: rgba(255, 255, 255, 0.04)
---text-primary: #e4e4e7
---text-secondary: #a1a1aa
---text-muted: #71717a
---mcha-cyan: #22d3ee
---mcha-green: #4ade80
---mcha-amber: #fbbf24
---mcha-red: #f87171
---mcha-surface: rgba(255, 255, 255, 0.03)
---mcha-border: rgba(255, 255, 255, 0.06)
-```
+新增插件命令必须：
 
-## manifest.json Schema
+1. 在 Rust 函数上添加 `#[tauri::command]`。
+2. 确保函数可从模块外访问，即 `pub fn` 或 `pub async fn`。
+3. 加入 `tauri::generate_handler![...]`。
+4. 在前端插件 `api.ts` 中封装 `invoke`。
+5. 为返回结构体派生 `Serialize`，为输入结构体派生 `Deserialize`。
 
-```jsonc
-{
-  "id": string,              // Required. Unique ID
-  "title": string,           // Required. Display title
-  "description": string,     // Optional. Management page description
-  "icon": string,            // Optional. Emoji icon
-  "defaultWidth": number,    // Optional. Logical px
-  "defaultHeight": number,   // Optional. Logical px
-  "collapsedHeight": number, // Optional. Logical px when collapsed. 0 = hide entirely
-  "showCloseButton": bool,   // Optional. Default: true
-  "showCollapseButton": bool,// Optional. Default: true
-  "showAttachButton": bool,  // Optional. Default: true
-  "defaultAttachEnabled": bool, // Optional. Default: true
-  "defaultAttachRemember": bool, // Optional. Default: false
-  "defaultWhitelist": string[]   // Optional. Default: []
-}
-```
+## build.rs 自动发现规则
 
-## Rust Backend Plugin Contract
+`src-tauri/build.rs` 执行两类发现：
 
-Every backend plugin module must implement:
+### Manifest 嵌入
+
+扫描路径：`../src/addons/*/manifest.json`
+
+结果：生成到 `$OUT_DIR/plugin_manifests.rs`，由 `src-tauri/src/plugins.rs` 读取。
+
+### Rust 插件模块发现
+
+扫描路径：`src-tauri/src/*/mod.rs`
+
+排除目录：
 
 ```rust
-// src-tauri/src/<plugin_id>/mod.rs
-pub fn setup(app: &tauri::AppHandle);  // Called by _plugins::setup_all() at startup
-
-// Optional: Tauri commands (must be registered in main.rs generate_handler!)
-#[tauri::command]
-pub fn my_command(...) -> Result<..., String>;
+[
+  "target", ".git", ".idea", ".vscode",
+  "acrylic", "plugins", "settings", "tray", "window_attach",
+]
 ```
 
-## build.rs Auto-Discovery Rules
+结果：生成 `src-tauri/src/_plugins.rs`，内容包括：
 
-Scans `src-tauri/src/` for directories containing `mod.rs`. Skips:
-- `target`, `.git`, `.idea`, `.vscode`
-- `acrylic`, `plugins`, `settings`, `tray`, `window_attach`
+- `pub mod <module>;`
+- `pub fn setup_all(app: &tauri::AppHandle)` 调用每个模块的 `setup(app)`。
 
-Generates `src/_plugins.rs` with:
-- `#[path = "<id>/mod.rs"] pub mod <id>;` for each plugin
-- `pub fn setup_all(app: &tauri::AppHandle) { <id>::setup(app); ... }`
-- Embedded manifest JSON from `src/addons/*/manifest.json`
+因此，非插件框架模块必须加入 skip 列表；插件模块必须提供 `setup(app)`。
 
-Manifests are loaded at runtime via `plugins::load_manifests()` → `embedded_plugin_manifests()`.
+## Serialization Rules
+
+建议 Rust 返回给前端的结构体使用：
+
+```rust
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExamplePayload {
+    pub current_value: String,
+}
+```
+
+前端类型对应：
+
+```ts
+interface ExamplePayload {
+  currentValue: string;
+}
+```
+
+Tauri invoke 参数也按 camelCase 传递：
+
+```rust
+#[tauri::command]
+pub fn set_attach_enabled(window_label: String, enabled: bool) -> Result<(), String> { ... }
+```
+
+```ts
+invoke("set_attach_enabled", { windowLabel, enabled });
+```
+
+## Update Checker Contract
+
+更新检查器位于 `src-tauri/src/updater.rs`，前端封装位于 `src/lib/api.ts`。
+
+返回类型：
+
+```ts
+interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string | null;
+  latestTag: string | null;
+  releaseName: string | null;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  hasUpdate: boolean;
+}
+```
+
+发布约定：
+
+- GitHub Release tag 使用 `v<semver>`，例如 `v1.0.0`。
+- 应用内版本使用不带 `v` 的 semver，例如 `1.0.0`。
+- `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 必须同步版本。
+
+## Release Contract
+
+发布脚本：`scripts/release.ps1`
+
+关键参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `-Version 1.0.0` | 同步版本号 |
+| `-Tag v1.0.0` | 设置发布 tag |
+| `-Target x86_64-pc-windows-msvc` | Windows x64 目标，默认值 |
+| `-AllowDirty` | 允许脏工作区，仅 CI 或特殊情况使用 |
+| `-SkipBuild` | 跳过构建 |
+| `-Publish` | 使用 GitHub CLI 发布 release |
+| `-Draft` | 创建 draft release |
+| `-Prerelease` | 标记 prerelease |
+| `-SkipRelease` | 不发布 GitHub Release |
+
+发布产物：
+
+- `src-tauri/target/release/galncelet.exe`
+- `src-tauri/target/release/bundle/**`
+- `src-tauri/target/release/bundle/SHA256SUMS.txt`
+
+脚本会验证 `galncelet.exe` 是 Windows GUI subsystem，确保 release 版不会打开控制台窗口。

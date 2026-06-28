@@ -153,7 +153,7 @@ fn request_media_info(
         let mut last_instant = state.last_poll_instant.lock().unwrap();
 
         if track_changed {
-            *est_pos = 0;
+            *est_pos = smtc_position;
             if smtc_duration > 0 { *est_dur = smtc_duration; }
             *last_instant = Some(now);
         } else {

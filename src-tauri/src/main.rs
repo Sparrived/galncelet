@@ -6,6 +6,7 @@ mod acrylic;
 mod plugins;
 mod settings;
 mod tray;
+mod updater;
 mod window_attach;
 
 // Auto-generated plugin modules
@@ -29,6 +30,7 @@ fn create_widget_window(
     default_attach_enabled: bool,
     default_attach_remember: bool,
     default_whitelist: &[String],
+    initial_visible: Option<bool>,
 ) {
     let url = format!("index.html?widget={}", url_suffix);
     let plugin_id = url_suffix;
@@ -57,7 +59,7 @@ fn create_widget_window(
         arm.insert(label.to_string(), initial_remember);
     }
 
-    let start_visible = !initial_attach;
+    let start_visible = initial_visible.unwrap_or(!initial_attach);
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
@@ -174,7 +176,7 @@ fn create_plugin_window(
         let _ = win.set_focus();
         return;
     }
-    create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, default_attach_remember, &default_whitelist);
+    create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, default_attach_remember, &default_whitelist, None);
 }
 
 #[tauri::command]
@@ -394,7 +396,6 @@ fn main() {
             let mut app_settings = settings::load_settings(handle.clone()).unwrap_or_default();
             app_settings.ensure_plugin_visibility(&manifests);
             println!("[setup] creating widget windows...");
-            let seq_set: std::collections::HashSet<String> = app_settings.widget_sequence.iter().cloned().collect();
             // Register sequence widget labels so attach loop skips them
             {
                 let mut sl = attach_state.sequence_labels.lock().unwrap();
@@ -404,7 +405,8 @@ fn main() {
             }
             for manifest in &manifests {
                 let visible = app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(false);
-                let in_sequence = seq_set.contains(&manifest.id);
+                let sequence_index = app_settings.widget_sequence.iter().position(|id| id == &manifest.id);
+                let in_sequence = sequence_index.is_some();
                 println!("[setup] loading plugin: {} (visible={}, seq={})", manifest.id, visible, in_sequence);
                 // Create window if visible OR if it's in the widget sequence
                 if !visible && !in_sequence {
@@ -416,18 +418,8 @@ fn main() {
                 let attach = manifest.default_attach_enabled.unwrap_or(true);
                 let remember = manifest.default_attach_remember.unwrap_or(false);
                 let wl = manifest.default_whitelist.clone().unwrap_or_default();
-                create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl);
-            }
-
-            // Hide sequence widgets that aren't the first (first one stays visible)
-            if app_settings.widget_sequence.len() > 1 {
-                for pid in &app_settings.widget_sequence[1..] {
-                    let label = format!("widget-{}", pid);
-                    if let Some(win) = handle.get_webview_window(&label) {
-                        let _ = win.hide();
-                        println!("[setup] hidden sequence widget: {}", pid);
-                    }
-                }
+                let initial_visible = sequence_index.map(|idx| idx == 0);
+                create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl, initial_visible);
             }
 
             // List all created windows
@@ -509,8 +501,11 @@ fn main() {
             // Settings
             settings::load_settings,
             settings::save_settings,
+            settings::set_start_on_boot,
             settings::save_window_state,
             settings::set_plugin_visible,
+            // Updates
+            updater::check_for_updates,
             // Window attach
             window_attach::list_visible_windows,
             // Git plugin wrappers (defined in main.rs)

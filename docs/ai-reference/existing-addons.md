@@ -1,484 +1,224 @@
-# Existing Addons Reference
-
-> Quick lookup of all 6 plugins: their IPC commands, events, state, manifest values, and architectural choices.
-> Target audience: AI coding agents. Exact data extracted from source code.
-
-## Summary Table
-
-| Plugin | ID | Path | IPC Commands | Events | Update Strategy | useAutoResize | useWidget | Manifest Size |
-|--------|----|------|-------------|--------|----------------|---------------|-----------|---------------|
-| System Monitor | `system-monitor` | `src/addons/system-monitor/` | 1 | 0 | Poll 2s | Yes | No | 320×150 |
-| Clipboard History | `clipboard-history` | `src/addons/clipboard-history/` | 4 | 0 | Poll 1s | Yes | No | 340×400 |
-| Page Notes | `page-notes` | `src/addons/page-notes/` | 4 | 0 | Poll 500ms | Yes | No | 360×160 |
-| Music Player | `music-player` | `src/addons/music-player/` | 5 | 0 | Poll 1s/5s | Yes | No | 320×240 |
-| AMKR Dashboard | `amkr` | `src/addons/amkr/` | 6 | 1 | Event-driven | Yes | No | 360×320 |
-| Git Status | `git` | `src/addons/git/` | 22 | 2 | Event-driven | No | Yes | 360×800 |
-
----
-
-## system-monitor
-
-**Path**: `src/addons/system-monitor/`
-**Files**: `index.tsx`, `manifest.json`, `types.ts`, `api.ts`, `SystemMonitorPanel.tsx`, `styles.css`
-**Rust**: `src-tauri/src/system_monitor/mod.rs`
-
-### Manifest
-
-```json
-{
-  "id": "system-monitor",
-  "title": "系统监控",
-  "description": "实时监控主机 CPU、GPU、内存、磁盘、网络等性能指标",
-  "icon": "🖥️",
-  "defaultWidth": 320,
-  "defaultHeight": 150,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": false,
-  "defaultAttachEnabled": false,
-  "defaultWhitelist": []
-}
-```
-
-### IPC Commands
+# 现有插件索引（AI 版）
 
-| Command | Return Type | Description |
-|---------|-------------|-------------|
-| `fetch_system_metrics` | `SystemMetrics \| null` | All metrics in one call |
+本文件帮助 AI 快速理解当前内置插件的职责、文件位置和常见修改入口。修改插件前仍需读取对应源码。
 
-### Types
+## 总览
 
-```ts
-// src/addons/system-monitor/types.ts
-SystemMetrics {
-  cpu: CpuInfo,
-  memory: MemoryInfo,
-  gpu: GpuInfo | null,
-  disk: DiskInfo,
-  network: NetworkInfo
-}
-CpuInfo { usage: number, cores: number, frequency: number, temperature: number | null }
-MemoryInfo { used: number, total: number, usage: number }
-GpuInfo { name: string, usage: number, memory_used: number, memory_total: number, temperature: number | null }
-DiskInfo { used: number, total: number, usage: number }
-NetworkInfo { upload_bytes: number, download_bytes: number, upload_speed: number, download_speed: number }
-```
-
-### State
-
-`metrics: SystemMetrics | null`
-
-### Rust State
-
-`SystemMonitorState` — contains `sys: Mutex<System>`, `networks: Mutex<Networks>`, `disks: Mutex<Disks>`, `last_network: Mutex<Option<NetworkSnapshot>>`, `nvml: Mutex<Option<Nvml>>`
-
-### Notes
-
-- Simplest plugin after clipboard-history
-- Uses `RadialGauge` from shared components
-- GPU section conditionally rendered (may be null)
-- Color thresholds: green (<70%), amber (70-89%), red (≥90%)
-- Uses WMI + sysinfo fallback for CPU temperature
-- NVML for GPU metrics
-
----
-
-## clipboard-history
-
-**Path**: `src/addons/clipboard-history/`
-**Files**: `index.tsx`, `manifest.json`, `api.ts`, `ClipboardPanel.tsx`, `styles.css`
-**No separate types.ts** — types defined inline in api.ts
-
-### Manifest
-
-```json
-{
-  "id": "clipboard-history",
-  "title": "剪贴板历史",
-  "description": "自动记录剪贴板内容，支持搜索和快速回填",
-  "icon": "📋",
-  "defaultWidth": 340,
-  "defaultHeight": 400,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": false,
-  "defaultAttachEnabled": false,
-  "defaultWhitelist": []
-}
-```
-
-### IPC Commands
-
-| Command | Args | Return Type | Description |
-|---------|------|-------------|-------------|
-| `get_clipboard_history` | `{ query?: string }` | `ClipboardEntry[]` | Fetch entries, optional search |
-| `copy_to_clipboard` | `{ id: string }` | `void` | Re-copy entry by ID |
-| `delete_clipboard_entry` | `{ id: string }` | `void` | Delete one entry |
-| `clear_clipboard_history` | — | `void` | Clear all entries |
-
-### Types (inline in api.ts)
-
-```ts
-ClipboardEntry { id: string, text: string, timestamp: string }
-```
-
-### State
-
-`entries: ClipboardEntry[]`, `query: string`, `copiedId: string | null`
-
-### Rust Backend
-
-`src-tauri/src/clipboard_history/mod.rs` — uses `clipboard_win` crate for Windows clipboard monitoring with background thread.
-
-### Notes
-
-- Simplest addon. No types.ts, no sub-components
-- `copiedId` provides brief visual feedback (green highlight) on copy
-- Background thread monitors clipboard changes
-
----
-
-## page-notes
-
-**Path**: `src/addons/page-notes/`
-**Files**: `index.tsx`, `manifest.json`, `types.ts`, `api.ts`, `PageNotesPanel.tsx`, `styles.css`, `browser-extension/`
-**Rust**: `src-tauri/src/page_notes/mod.rs`
-
-### Manifest
-
-```json
-{
-  "id": "page-notes",
-  "title": "页面笔记",
-  "description": "根据浏览器页面 URL 显示预设笔记，支持 substring 和 regex 匹配",
-  "icon": "📝",
-  "defaultWidth": 360,
-  "defaultHeight": 160,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": true,
-  "defaultAttachEnabled": true,
-  "defaultAttachRemember": false,
-  "defaultWhitelist": [
-    "chrome.exe",
-    "msedge.exe",
-    "firefox.exe",
-    "brave.exe",
-    "vivaldi.exe"
-  ]
-}
-```
-
-### IPC Commands
-
-| Command | Args | Return Type | Description |
-|---------|------|-------------|-------------|
-| `load_page_notes` | — | `PageNotesConfig` | Load rules config |
-| `save_page_notes` | `{ config: PageNotesConfig }` | `void` | Persist rules config |
-| `get_browser_url` | — | `string \| null` | Current browser URL (framework command) |
-| `get_ws_port` | — | `number` | WebSocket port for browser extension |
-
-### Types
-
-```ts
-// src/addons/page-notes/types.ts
-PageNoteRule {
-  id: string,
-  name: string,
-  pattern: string,
-  matchMode: "substring" | "regex",
-  note: string,
-  enabled: boolean
-}
-PageNotesConfig { rules: PageNoteRule[], wsPort: number }
-```
-
-### State
-
-`config: PageNotesConfig`, `currentUrl: string`, `matchedNote: string | null`, `view: "match" | "rules"`, `editingId: string | null`, `showAdd: boolean`
-
-### Rust Backend
-
-`src-tauri/src/page_notes/mod.rs` — WebSocket server for browser extension communication.
-
-### Notes
-
-- Has companion Chrome extension in `browser-extension/` (Manifest V3, WebSocket communication)
-- Fastest poll interval (500ms) for URL detection
-- Two views: match view (shows matched note) and rules view (edit rules)
-- Uses `get_browser_url` via `getBrowserUrl()` from frontend api.ts (exposed as `get_browser_url` in Rust)
-
----
-
-## music-player
-
-**Path**: `src/addons/music-player/`
-**Files**: `index.tsx`, `manifest.json`, `types.ts`, `api.ts`, `MusicPanel.tsx`, `styles.css`
-**Rust**: `src-tauri/src/music_player/mod.rs`
-
-### Manifest
-
-```json
-{
-  "id": "music-player",
-  "title": "音乐播放",
-  "description": "自动检测系统媒体播放器，显示正在播放的音乐信息并控制播放",
-  "icon": "🎵",
-  "defaultWidth": 320,
-  "defaultHeight": 240,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": false,
-  "defaultAttachEnabled": false,
-  "defaultWhitelist": []
-}
-```
-
-### IPC Commands
-
-| Command | Args | Return Type | Description |
-|---------|------|-------------|-------------|
-| `get_media_info` | — | `MediaInfo \| null` | Current media playback info |
-| `media_control` | `{ action: MediaAction }` | `boolean` | Control playback |
-| `get_media_sessions` | — | `MediaSessionInfo[]` | List all SMTC sessions |
-| `select_media_session` | `{ session_id?: string }` | `void` | Select which session to control |
-| `get_lyrics` | `{ title, artist, album }` | `Lyrics \| null` | Fetch lyrics (NetEase + LRCLIB) |
-
-### Types
-
-```ts
-// src/addons/music-player/types.ts
-MediaInfo {
-  title: string,
-  artist: string,
-  album: string,
-  thumbnail: string,
-  duration_ms: number,
-  position_ms: number,
-  is_playing: boolean,
-  shuffle: boolean,
-  repeat_mode: string
-}
-MediaSessionInfo { id: string, app_name: string }
-LyricLine { time_ms: number, text: string }
-Lyrics { lines: LyricLine[], source: string, duration_ms?: number }
-MediaAction = "Play" | "Pause" | "Toggle" | "Next" | "Previous"
-           | { SetPosition: number }
-           | { SetShuffle: boolean }
-           | "CycleRepeat"
-```
-
-### State
-
-`info: MediaInfo | null`, `position: number`, `seeking: boolean`, `sessions: MediaSessionInfo[]`, `selectedId: string | null`, `lyrics: Lyrics | null`
-
-### Rust Backend
-
-`src-tauri/src/music_player/mod.rs` — Uses Windows SMTC (System Media Transport Controls).
-
-### Update Strategy
-
-- Media info: poll every 1s
-- Sessions: poll every 5s
-
-### Notes
-
-- Uses Windows SMTC (System Media Transport Controls) for media integration
-- Client-side position estimation between polls
-- Multi-source lyrics fetching (NetEase + LRCLIB) with caching
-- Session picker to switch between active media sessions
-- Compact layout with `useAutoResize` (uses `mp-bg-layer` wrapper for absolute-positioned backgrounds)
-
----
-
-## amkr
-
-**Path**: `src/addons/amkr/`
-**Files**: `index.tsx`, `manifest.json`, `types.ts`, `api.ts`, `AmkrPanel.tsx`, `styles.css`, `components/Dashboard.tsx`
-**Rust**: `src-tauri/src/amkr/mod.rs`
-
-### Manifest
-
-```json
-{
-  "id": "amkr",
-  "title": "AMKR 仪表盘",
-  "description": "Auto Model Key Router 实时指标监控",
-  "icon": "📊",
-  "defaultWidth": 360,
-  "defaultHeight": 320,
-  "showCloseButton": false,
-  "showCollapseButton": false,
-  "showAttachButton": false,
-  "defaultAttachEnabled": false,
-  "defaultWhitelist": []
-}
-```
-
-### IPC Commands
-
-| Command | Args | Return Type | Description |
-|---------|------|-------------|-------------|
-| `fetch_amkr_metrics` | — | `AmkrMetrics` | One-shot metrics fetch |
-| `generate_commit_message` | `{ repo: string }` | `string` | AI-generated commit message (also used by git plugin) |
-| `get_amkr_models` | — | `AmkrModelInfo[]` | List available models |
-| `set_amkr_unified_model` | `{ model: string }` | `void` | Switch active model |
-| `start_amkr_ws` | — | `void` | Start WebSocket listener |
-| `stop_amkr_ws` | — | `void` | Stop WebSocket listener |
-
-### Events
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `amkr-event` | `{ type: string, data: any }` | Real-time updates. `type="metrics_snapshot"` for metrics |
-
-### Types
-
-```ts
-// src/addons/amkr/types.ts
-AmkrMetrics {
-  total_requests: number,
-  success_rate: number,
-  avg_latency_ms: number,
-  tokens_used: number,
-  active_keys: number,
-  // ... additional fields
-}
-AmkrModelInfo { id: string, name: string, provider: string }
-```
-
-### State
-
-`metrics: AmkrMetrics`, `models: AmkrModelInfo[]`, `loading: boolean`, `showDropdown: boolean`
-
-### Rust Backend
-
-`src-tauri/src/amkr/mod.rs` — WebSocket client connecting to AMKR backend + AI commit message generation.
-
-### Notes
-
-- Event-driven (WebSocket → Tauri event), not polling
-- Uses `fmtNumber`, `fmtMs`, `fmtUptime`, `fmtPercent` from `src/lib/format`
-- Uses shared components: `AnimatedNumber`, `ProgressBar`, `StatCard`, `MetricRow`
-- Sub-component `Dashboard` renders the metrics layout
-- Standalone dashboard: no close/collapse/attach buttons
-- Provides `generate_commit_message` command used by git plugin for AI commit messages
-
----
-
-## git
-
-**Path**: `src/addons/git/`
-**Files**: `index.tsx`, `manifest.json`, `types.ts`, `api.ts`, `GitPanel.tsx`, `styles.css`, `components/GitTree.tsx`, `components/DiffViewer.tsx`, `components/CommitTree.tsx`, `components/GitConsole.tsx`
-**Rust**: `src-tauri/src/git/mod.rs`, `src-tauri/src/git/git_watcher.rs`
-
-### Manifest
-
-```json
-{
-  "id": "git",
-  "title": "Git 状态",
-  "description": "Git 仓库变更查看、暂存、提交、推送",
-  "icon": "🔀",
-  "defaultWidth": 360,
-  "defaultHeight": 800,
-  "showCloseButton": true,
-  "showCollapseButton": true,
-  "showAttachButton": true,
-  "defaultAttachEnabled": true,
-  "defaultWhitelist": [
-    "powershell.exe",
-    "pwsh.exe",
-    "cmd.exe",
-    "WindowsTerminal.exe",
-    "Tabby.exe"
-  ]
-}
-```
-
-### IPC Commands
-
-| Command | Args | Return Type | Description |
-|---------|------|-------------|-------------|
-| `get_status` | `{ repo: string }` | `GitStatus` | Repo status (staged/unstaged/untracked) |
-| `get_file_diff` | `{ repo: string, file: string, staged: boolean }` | `string` | Unified diff for a file |
-| `select_folder` | — | `string \| null` | Native folder picker dialog |
-| `stage_file` | `{ repo: string, file: string }` | `void` | Stage a file |
-| `stage_all` | `{ repo: string }` | `void` | Stage all changes |
-| `unstage_file` | `{ repo: string, file: string }` | `void` | Unstage a file |
-| `discard_file` | `{ repo: string, file: string }` | `void` | Discard changes |
-| `untrack_file` | `{ repo: string, file: string }` | `void` | Remove from tracking |
-| `commit` | `{ repo: string, message: string }` | `string` | Create commit |
-| `pull` | `{ repo: string, rebase?: boolean }` | `string` | Pull from remote |
-| `push` | `{ repo: string }` | `string` | Push to remote |
-| `git_fetch` | `{ repo: string }` | `string` | Fetch from remote |
-| `list_branches` | `{ repo: string }` | `GitBranch[]` | List all branches |
-| `checkout_branch` | `{ repo: string, branch: string }` | `void` | Switch branch |
-| `git_log` | `{ repo: string, maxCount?: number }` | `GitLogEntry[]` | Commit history |
-| `list_submodules` | `{ repo: string }` | `GitSubmodule[]` | List submodules |
-| `watch_git_repo` | `{ repo: string }` | `void` | Start watching repo for changes |
-| `unwatch_git_repo` | `{ repo: string }` | `void` | Stop watching repo |
-| `generate_commit_message` | `{ repo: string }` | `string` | AI-generated commit message (via AMKR) |
-| `exec_git_command` | `{ repo: string, command: string }` | `GitCommandResult` | Raw git command execution |
-| `list_remotes` | `{ repo: string }` | `GitRemoteInfo[]` | List remotes |
-| `add_remote` | `{ repo: string, name: string, url: string }` | `void` | Add remote |
-| `remove_remote` | `{ repo: string, name: string }` | `void` | Remove remote |
-
-### Events
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `git-changed` | `{ repo: string }` | File watcher detected changes |
-| `ai-commit-progress` | `{ chunk: string }` | Streaming AI commit message progress |
-
-### Types
-
-```ts
-// src/addons/git/types.ts
-GitStatus {
-  repoRoot: string,
-  branch: string,
-  hasHead: boolean,
-  files: GitFileEntry[],
-  ahead: number,
-  behind: number
-}
-GitFileEntry {
-  path: string,
-  statusCode: string,
-  staged: boolean,
-  additions: number,
-  deletions: number
-}
-GitBranch { name: string, current: boolean, remote?: string }
-GitLogEntry {
-  hash: string, fullHash: string, parents: string[],
-  author: string, date: string, message: string
-}
-GitSubmodule { name: string, path: string, url: string }
-GitRemoteInfo { name: string, url: string }
-GitDiff { filePath: string, diff: string, staged: boolean }
-GitCommandResult { success: boolean, stdout: string, stderr: string }
-```
-
-### State
-
-`settings`, `status`, `tree` (TreeNode[]), `diff`, `selectedFile`, `commitMsg`, `branches`, `logEntries`, `view` ("changes" | "history"), `fetching`, `aiGenerating`, `aiError`, `consoleLog`, `submodules`, `parentRepo`
-
-### Rust Backend
-
-`src-tauri/src/git/mod.rs` + `src-tauri/src/git/git_watcher.rs` — Uses `git2` crate + file watcher (`notify` crate).
-
-### Notes
-
-- Most complex addon (22 IPC commands, 4 sub-components)
-- Only addon that uses `useWidget()` for `showResult`/`showError`/`onStatusChange`
-- Only addon that does NOT use `useAutoResize` (fixed height 800px)
-- Event-driven via file watcher (`notify` crate), not polling
-- Uses `loadSettings()`/`saveSettings()` for persistent `savedRepos` and `currentRepo`
-- Has dual view mode: changes (file tree + diff) and history (commit graph)
-- AI commit message generation with streaming progress (uses AMKR's `generate_commit_message`)
-- Submodule navigation support
-- Remote management (add/remove/list)
-- `select_folder` uses `tauri_plugin_dialog`
-- `git_watcher` module handles filesystem watching for `git-changed` events
+| 插件 ID | 前端入口 | 后端模块 | 主要能力 |
+| --- | --- | --- | --- |
+| `git` | `src/addons/git/index.tsx` | `src-tauri/src/git/mod.rs` | Git 状态、diff、暂存、提交、分支、远程、watcher |
+| `system-monitor` | `src/addons/system-monitor/index.tsx` | `src-tauri/src/system_monitor/mod.rs` | CPU、GPU、内存、磁盘、网络指标 |
+| `clipboard-history` | `src/addons/clipboard-history/index.tsx` | `src-tauri/src/clipboard_history/mod.rs` | 剪贴板监听、历史列表、搜索、复制回填、持久化 |
+| `page-notes` | `src/addons/page-notes/index.tsx` | `src-tauri/src/page_notes/mod.rs` | 按浏览器 URL 匹配笔记、WebSocket、浏览器扩展资源 |
+| `music-player` | `src/addons/music-player/index.tsx` | `src-tauri/src/music_player/mod.rs` | 系统媒体会话、播放控制、进度、歌词 |
+| `amkr` | `src/addons/amkr/index.tsx` | `src-tauri/src/amkr/mod.rs` | AMKR 指标、模型配置、提交信息生成、事件 WebSocket |
+
+## `git`
+
+前端：
+
+- `src/addons/git/GitPanel.tsx`
+- `src/addons/git/api.ts`
+- `src/addons/git/types.ts`
+- `src/addons/git/components/GitTree.tsx`
+- `src/addons/git/components/DiffViewer.tsx`
+- `src/addons/git/components/GitConsole.tsx`
+- `src/addons/git/components/CommitTree.tsx`
+- `src/addons/git/styles.css`
+
+后端：
+
+- `src-tauri/src/git/mod.rs`
+- `src-tauri/src/git/git_watcher.rs`
+
+命令：
+
+- `get_status`
+- `get_file_diff`
+- `exec_git_command`
+- `stage_file`
+- `stage_all`
+- `unstage_file`
+- `discard_file`
+- `untrack_file`
+- `commit`
+- `pull`
+- `push`
+- `git_fetch`
+- `list_branches`
+- `checkout_branch`
+- `git_log`
+- `list_submodules`
+- `list_remotes`
+- `add_remote`
+- `remove_remote`
+- `watch_git_repo`
+- `unwatch_git_repo`
+
+常见修改：
+
+- UI 布局、文件树、diff 展示：改前端 components。
+- Git 命令行为：改 `src-tauri/src/git/mod.rs`。
+- 自动刷新和 watcher：改 `git_watcher.rs` 与 `GitPanel.tsx`。
+
+## `system-monitor`
+
+前端：
+
+- `src/addons/system-monitor/SystemMonitorPanel.tsx`
+- `src/addons/system-monitor/api.ts`
+- `src/addons/system-monitor/types.ts`
+- `src/addons/system-monitor/styles.css`
+
+后端：
+
+- `src-tauri/src/system_monitor/mod.rs`
+
+命令：
+
+- `fetch_system_metrics`
+
+常见修改：
+
+- 指标采集：改 Rust `SystemMonitorState` 和 command。
+- 展示样式：改 `SystemMonitorPanel.tsx` 与 `styles.css`。
+- 新增字段：同步 Rust 返回结构体、前端 `types.ts` 和 UI。
+
+## `clipboard-history`
+
+前端：
+
+- `src/addons/clipboard-history/ClipboardPanel.tsx`
+- `src/addons/clipboard-history/api.ts`
+- `src/addons/clipboard-history/styles.css`
+
+后端：
+
+- `src-tauri/src/clipboard_history/mod.rs`
+
+命令：
+
+- `get_clipboard_history`
+- `copy_to_clipboard`
+- `delete_clipboard_entry`
+- `clear_clipboard_history`
+
+常见修改：
+
+- 监听和去重策略：改 Rust monitor loop。
+- 历史上限和持久化：改 Rust state 和 app data 文件逻辑。
+- 搜索和列表交互：改 `ClipboardPanel.tsx`。
+
+## `page-notes`
+
+前端：
+
+- `src/addons/page-notes/PageNotesPanel.tsx`
+- `src/addons/page-notes/api.ts`
+- `src/addons/page-notes/types.ts`
+- `src/addons/page-notes/styles.css`
+- `src/addons/page-notes/browser-extension/*`
+
+后端：
+
+- `src-tauri/src/page_notes/mod.rs`
+- `src-tauri/src/page_notes/page_url.rs`
+- `src-tauri/src/browser_ext/mod.rs`
+
+命令：
+
+- `load_page_notes`
+- `save_page_notes`
+- `get_ws_port`
+- `open_extension_dir`
+- `launch_browser_with_extension`
+
+常见修改：
+
+- URL 识别：改 `page_url.rs`。
+- 笔记匹配/存储：改 `page_notes/mod.rs` 和前端类型。
+- 浏览器扩展：改 `browser-extension`，并确认 `tauri.conf.json` 的 `bundle.resources`。
+
+## `music-player`
+
+前端：
+
+- `src/addons/music-player/MusicPanel.tsx`
+- `src/addons/music-player/api.ts`
+- `src/addons/music-player/types.ts`
+- `src/addons/music-player/styles.css`
+
+后端：
+
+- `src-tauri/src/music_player/mod.rs`
+- `src-tauri/src/music_player/lyrics.rs`
+
+命令：
+
+- `get_media_info`
+- `get_media_sessions`
+- `select_media_session`
+- `media_control`
+- `get_lyrics`
+
+常见修改：
+
+- SMTC 媒体会话：改 `music_player/mod.rs`。
+- 歌词获取与解析：改 `lyrics.rs`。
+- 播放进度、控制按钮、session 选择：改 `MusicPanel.tsx`。
+
+## `amkr`
+
+前端：
+
+- `src/addons/amkr/AmkrPanel.tsx`
+- `src/addons/amkr/components/Dashboard.tsx`
+- `src/addons/amkr/api.ts`
+- `src/addons/amkr/types.ts`
+- `src/addons/amkr/styles.css`
+
+后端：
+
+- `src-tauri/src/amkr/mod.rs`
+
+命令：
+
+- `fetch_amkr_metrics`
+- `generate_commit_message`
+- `get_amkr_models`
+- `set_amkr_unified_model`
+- `start_amkr_ws`
+- `stop_amkr_ws`
+
+常见修改：
+
+- 指标接口和模型配置：改 Rust command。
+- WebSocket 生命周期：改 `AmkrWsHandle` 相关逻辑。
+- 仪表盘展示：改 `Dashboard.tsx` 和样式。
+
+## 宿主能力相关文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `src/App.tsx` | 动态导入前端插件并按窗口类型渲染 |
+| `src/addons/registry.ts` | 前端插件注册表和 `PluginDef` 类型 |
+| `src/widgets/WidgetShell.tsx` | 标题栏、关闭、折叠、吸附、窗口状态保存 |
+| `src/widgets/WidgetButtons.tsx` | 标题栏按钮 |
+| `src/widgets/useAutoResize.ts` | 内容高度自适应 |
+| `src/lib/api.ts` | 宿主级 Tauri command 封装 |
+| `src/lib/types.ts` | 全局设置和窗口状态类型 |
+| `src-tauri/src/main.rs` | 窗口创建、command handler 注册、启动流程 |
+| `src-tauri/src/settings.rs` | 设置持久化、开机自启动、热键、插件可见性 |
+| `src-tauri/src/window_attach.rs` | 前台窗口吸附、全屏隐藏、序列切换协作 |
+| `src-tauri/src/tray.rs` | 系统托盘与插件菜单 |
+| `src-tauri/src/plugins.rs` | 读取编译期嵌入的 manifest |
+| `src-tauri/build.rs` | 自动嵌入 manifest、生成 `_plugins.rs` |
+| `src-tauri/src/updater.rs` | GitHub Releases 更新检查 |
+
+## 修改建议
+
+- 修改单个插件时，优先限制在该插件前端目录和对应 Rust 模块。
+- 新增 command 时必须改 `src-tauri/src/main.rs`。
+- 修改通用窗口行为时才改 `WidgetShell`、`window_attach.rs` 或 `settings.rs`。
+- 修改 manifest 字段时同步 `index.tsx` 注册字段。
+- 修改插件资源时同步 `src-tauri/tauri.conf.json`。

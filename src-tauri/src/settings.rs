@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,6 +36,9 @@ pub struct AppSettings {
     pub log_max_count: u32,
     /// Whether the window stays on top (default true)
     pub always_on_top: bool,
+    /// Whether the app starts with Windows login (default false)
+    #[serde(default)]
+    pub start_on_boot: bool,
     /// Whether `git pull` uses --rebase (default true)
     pub pull_rebase: bool,
     /// Saved repository paths
@@ -61,6 +65,7 @@ impl Default for AppSettings {
             card_width: 360,
             log_max_count: 50,
             always_on_top: true,
+            start_on_boot: false,
             pull_rebase: true,
             saved_repos: Vec::new(),
             panel_visibility: HashMap::new(),
@@ -115,6 +120,68 @@ pub fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(),
     let data =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("Failed to serialize: {e}"))?;
     fs::write(&path, data).map_err(|e| format!("Failed to write settings: {e}"))?;
+    Ok(())
+}
+
+/// Tauri command: enable or disable Windows login startup.
+#[tauri::command]
+pub fn set_start_on_boot(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (run_key, _) = hkcu
+            .create_subkey_with_flags(
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                KEY_READ | KEY_WRITE,
+            )
+            .map_err(|e| format!("Failed to open Windows startup registry key: {e}"))?;
+
+        let app_name = app.package_info().name.clone();
+        if enabled {
+            let exe = env::current_exe()
+                .map_err(|e| format!("Failed to resolve current executable: {e}"))?;
+            let command = format!("\"{}\"", exe.display());
+            run_key
+                .set_value(&app_name, &command)
+                .map_err(|e| format!("Failed to enable startup: {e}"))?;
+            let stored: String = run_key
+                .get_value(&app_name)
+                .map_err(|e| format!("Failed to verify startup registry value: {e}"))?;
+            if stored != command {
+                return Err(format!(
+                    "Startup registry verification failed: expected {command}, got {stored}"
+                ));
+            }
+        } else {
+            match run_key.delete_value(&app_name) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("Failed to disable startup: {e}")),
+            }
+            match run_key.get_value::<String, _>(&app_name) {
+                Ok(value) => {
+                    return Err(format!(
+                        "Startup registry verification failed: value still exists as {value}"
+                    ));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("Failed to verify startup registry removal: {e}")),
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+    }
+
+    let mut settings = load_settings(app.clone())?;
+    settings.start_on_boot = enabled;
+    save_settings(app, settings)?;
+
     Ok(())
 }
 
@@ -324,15 +391,22 @@ pub fn unregister_all_hotkeys(app: &tauri::AppHandle) {
 
 /// Toggle a plugin's visibility: if hidden → show, if visible → hide.
 fn toggle_plugin_visibility(app: &tauri::AppHandle, plugin_id: &str) {
+    let is_in_sequence = load_settings(app.clone())
+        .map(|settings| settings.widget_sequence.iter().any(|id| id == plugin_id))
+        .unwrap_or(false);
     let label = format!("widget-{}", plugin_id);
     if let Some(win) = app.get_webview_window(&label) {
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
-            let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), false);
+            if !is_in_sequence {
+                let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), false);
+            }
             println!("[hotkey] hidden {}", plugin_id);
         } else {
             let _ = win.show();
-            let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), true);
+            if !is_in_sequence {
+                let _ = set_plugin_visible(app.clone(), plugin_id.to_string(), true);
+            }
             println!("[hotkey] shown {}", plugin_id);
         }
     } else {

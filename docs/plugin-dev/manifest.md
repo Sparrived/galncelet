@@ -1,81 +1,73 @@
 # manifest.json 字段参考
 
-每个插件目录下必须包含一个 `manifest.json` 文件，用于声明插件的元数据和窗口行为配置。该文件会在 `index.tsx` 中通过 `import manifest from "./manifest.json"` 导入，并展开传入 `registerPlugin()`。
-
-同时，`build.rs` 会在编译时自动扫描 `src/addons/*/manifest.json` 并将其内容嵌入到 Rust 编译产物中，供后端 `plugins::load_manifests()` 读取。
+`manifest.json` 位于 `src/addons/<plugin-id>/manifest.json`，用于描述插件元数据和默认窗口行为。Tauri 构建时，`src-tauri/build.rs` 会扫描所有 manifest 并嵌入到 Rust 二进制中；运行时宿主用这些信息创建插件窗口、管理插件列表和恢复用户设置。
 
 ## 字段一览
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `id` | `string` | ✅ | — | 唯一标识符，用作设置存储键和窗口标签后缀（`widget-<id>`） |
-| `title` | `string` | ✅ | — | 显示标题，出现在窗口标题栏和管理页面 |
-| `description` | `string` | ❌ | `undefined` | 管理页面显示的简短描述 |
-| `icon` | `string` | ❌ | `undefined` | 管理页面显示的 Emoji 图标 |
-| `defaultWidth` | `number` | ❌ | `undefined` | 默认窗口宽度（逻辑像素） |
-| `defaultHeight` | `number` | ❌ | `undefined` | 默认窗口高度（逻辑像素） |
-| `collapsedHeight` | `number` | ❌ | `undefined` | 折叠后高度（逻辑像素）。0 = 完全隐藏 |
-| `showCloseButton` | `boolean` | ❌ | `true` | 标题栏是否显示关闭按钮 |
-| `showCollapseButton` | `boolean` | ❌ | `true` | 标题栏是否显示折叠按钮 |
-| `showAttachButton` | `boolean` | ❌ | `true` | 标题栏是否显示「附着到前台窗口」按钮 |
-| `defaultAttachEnabled` | `boolean` | ❌ | `true` | 是否默认启用前台窗口附着 |
-| `defaultAttachRemember` | `boolean` | ❌ | `false` | 是否默认启用「记住位置」模式（只管理显隐，不管位置） |
-| `defaultWhitelist` | `string[]` | ❌ | `[]` | 附着白名单——前台窗口标题的子串匹配列表。空数组 = 不限制 |
+| --- | --- | --- | --- | --- |
+| `id` | `string` | 是 | 无 | 插件唯一 ID，也是窗口标签后缀和设置 key |
+| `title` | `string` | 是 | 无 | 插件标题 |
+| `description` | `string` | 否 | `undefined` | 管理页说明 |
+| `icon` | `string` | 否 | `undefined` | 管理页图标，通常是 emoji |
+| `defaultWidth` | `number` | 否 | `360` | 初始窗口宽度 |
+| `defaultHeight` | `number` | 否 | `600` | 初始窗口高度 |
+| `showCloseButton` | `boolean` | 否 | `true` | 是否显示关闭按钮 |
+| `showCollapseButton` | `boolean` | 否 | `true` | 是否显示折叠按钮 |
+| `showAttachButton` | `boolean` | 否 | `true` | 是否显示吸附按钮 |
+| `defaultAttachEnabled` | `boolean` | 否 | `true` | 是否默认吸附到前台窗口 |
+| `defaultAttachRemember` | `boolean` | 否 | `false` | 是否默认只记忆显示/隐藏，不移动位置 |
+| `defaultWhitelist` | `string[]` | 否 | `[]` | 默认吸附白名单，匹配窗口标题或进程名片段 |
 
 ## 字段详解
 
 ### `id`
 
-插件的唯一标识。用途：
-- 作为 `AppSettings.windowStates` 和 `panelVisibility` 的键
-- Tauri 窗口标签格式为 `widget-<id>`
-- 管理页面通过此 ID 引用插件
-- Rust 侧插件目录名（`src-tauri/src/<id>/`）
-
-**命名规范**：使用 kebab-case，如 `system-monitor`、`clipboard-history`。
+- 必须全局唯一。
+- 推荐使用小写字母、数字和短横线，例如 `page-notes`。
+- 会用于 `widget-<id>` 窗口标签、`index.html?widget=<id>` URL、`panelVisibility[id]` 和 `windowStates[id]`。
+- 发布后不要修改，否则用户已有设置会失效。
 
 ### `title`
 
-窗口标题栏左侧显示的文字，同时出现在管理页面的插件列表中。
+显示在标题栏、管理页和托盘相关入口中。应短而清晰。
 
-### `description` & `icon`
+### `description` 和 `icon`
 
-仅在管理页面（`ManagePage`）中显示。`icon` 推荐使用单个 Emoji 字符。
+仅影响展示。`icon` 推荐使用单个 emoji 或 1-2 个字符，避免宽度过大。
 
-### `defaultWidth` & `defaultHeight`
+### `defaultWidth` 和 `defaultHeight`
 
-插件窗口的初始尺寸，单位为逻辑像素。注意：
-- `defaultWidth` 通常会被全局设置 `AppSettings.cardWidth`（默认 360px）覆盖
-- `defaultHeight` 作为窗口创建时的初始高度
-- 如果使用 `useAutoResize` hook，窗口高度会随内容自动调整
-
-### `collapsedHeight`
-
-折叠后窗口的高度。如果不设置，折叠时使用默认高度（标题栏 36px）。设置为 0 可以完全隐藏窗口内容区域。
+- 单位为逻辑像素。
+- 用户调整窗口或插件保存高度后，宿主会优先使用已保存状态。
+- 对内容高度动态变化的插件，可以结合 `useAutoResize` 或手动保存窗口状态。
 
 ### 按钮控制
 
-`showCloseButton`、`showCollapseButton`、`showAttachButton` 控制标题栏右侧的按钮显隐。
+- `showCloseButton`: 控制标题栏关闭按钮。关闭按钮会隐藏窗口并更新插件可见性。
+- `showCollapseButton`: 控制折叠/展开按钮。折叠时由 `WidgetShell` 调整窗口高度。
+- `showAttachButton`: 控制吸附和记忆位置按钮区域。
 
-典型配置组合：
+### 吸附系统
 
-| 场景 | close | collapse | attach |
-|------|-------|----------|--------|
-| 标准工具挂件 | `true` | `true` | `false` |
-| 附着到特定应用 | `true` | `true` | `true` |
-| 常驻仪表盘 | `false` | `false` | `false` |
+- `defaultAttachEnabled=true`: 窗口默认跟随前台窗口显示、隐藏和移动。
+- `defaultAttachEnabled=false`: 插件默认作为独立悬浮窗显示。
+- `defaultAttachRemember=true`: 只根据前台窗口决定显示/隐藏，不改变窗口位置。
+- `defaultWhitelist=[]`: 不限制前台窗口；非空时仅匹配列表中的窗口标题或进程名片段。
 
-### 附着系统
+常见白名单：
 
-附着功能让挂件跟随用户的前台窗口自动显示/隐藏：
+```json
+["powershell.exe", "pwsh.exe", "cmd.exe", "WindowsTerminal.exe"]
+```
 
-- **`defaultAttachEnabled`**：是否默认开启附着。开启后，挂件会跟随前台窗口。
-- **`defaultAttachRemember`**：「记住位置」模式。开启后，附着系统只管理挂件的显隐，不重新定位。
-- **`defaultWhitelist`**：白名单数组。非空时，只有前台窗口标题包含白名单中某个子串时才触发附着。通常填入目标应用的进程名。
+```json
+["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "vivaldi.exe"]
+```
 
 ## 示例
 
-### 独立工具（不附着）
+### 独立工具
 
 ```json
 {
@@ -98,9 +90,9 @@
 ```json
 {
   "id": "git",
-  "title": "Git",
-  "description": "Git 仓库管理",
-  "icon": "🔀",
+  "title": "Git 状态",
+  "description": "Git 仓库变更查看、暂存、提交、推送",
+  "icon": "📋",
   "defaultWidth": 360,
   "defaultHeight": 800,
   "showCloseButton": true,
@@ -117,7 +109,7 @@
 {
   "id": "page-notes",
   "title": "页面笔记",
-  "description": "根据浏览器 URL 显示关联笔记",
+  "description": "根据浏览器页面 URL 显示预设笔记",
   "icon": "📝",
   "defaultWidth": 360,
   "defaultHeight": 160,
@@ -130,13 +122,13 @@
 }
 ```
 
-### 常驻仪表盘（无按钮）
+### 常驻仪表盘
 
 ```json
 {
   "id": "amkr",
-  "title": "AMKR Dashboard",
-  "description": "Auto Model Key Router 实时监控",
+  "title": "AMKR 仪表盘",
+  "description": "Auto Model Key Router 实时指标监控",
   "icon": "📊",
   "defaultWidth": 360,
   "defaultHeight": 320,
@@ -148,37 +140,34 @@
 }
 ```
 
-## 与 PluginDef 的映射关系
+## 与 `PluginDef` 的映射
 
-`manifest.json` 的字段会直接展开传入 `registerPlugin()`：
+`src/addons/<plugin-id>/index.tsx` 调用 `registerPlugin` 时，需要重复 manifest 中的大部分字段，并额外传入 `component`。
 
-```ts
-// index.tsx 中的实际调用
-registerPlugin({
-  ...manifest,           // 来自 manifest.json 的所有字段
-  component: MyPanel,    // 额外添加的 React 组件
-});
-```
+保持一致的字段：
 
-对应的 `PluginDef` 接口（`src/addons/registry.ts`）：
+- `id`
+- `title`
+- `description`
+- `icon`
+- `defaultWidth`
+- `defaultHeight`
+- `showCloseButton`
+- `showCollapseButton`
+- `showAttachButton`
+- `defaultAttachEnabled`
+- `defaultAttachRemember`
+- `defaultWhitelist`
 
-```ts
-interface PluginDef {
-  id: string;
-  title: string;
-  description?: string;
-  icon?: string;
-  collapsedHeight?: number;
-  defaultWidth?: number;
-  defaultHeight?: number;
-  showCloseButton?: boolean;
-  showCollapseButton?: boolean;
-  showAttachButton?: boolean;
-  defaultAttachEnabled?: boolean;
-  defaultAttachRemember?: boolean;
-  defaultWhitelist?: string[];
-  component: FC;
-}
-```
+仅前端字段：
 
-> **注意**：`collapsedHeight` 在 `PluginDef` 中定义，但在当前 `WidgetShell` 实现中尚未使用（折叠时固定使用标题栏高度 36px）。保留为未来扩展的预留字段。
+- `component`
+- `collapsedHeight`（可选，用于定制折叠高度）
+
+## 校验清单
+
+- JSON 合法，无注释、无尾随逗号。
+- `id` 与目录名、`index.tsx` 注册 ID 一致。
+- manifest 与 `registerPlugin` 的展示字段一致。
+- 新资源已加入 `tauri.conf.json` 的 `bundle.resources`。
+- 修改后运行 `npm run build` 和 `cargo check --manifest-path src-tauri/Cargo.toml`。

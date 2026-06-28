@@ -1,232 +1,108 @@
 # 可用 Hooks
 
-Galncelet 框架为插件组件提供了 4 个 React Hook，用于自动调整窗口尺寸、访问上下文功能和注册右键菜单。
+Galncelet 提供少量宿主 hooks 和 context，帮助插件处理窗口尺寸、通用反馈、右键菜单和标题栏行为。
 
-## useAutoResize
+## `useAutoResize`
 
-**来源**：`src/widgets/useAutoResize.ts`
+位置：`src/widgets/useAutoResize.ts`
 
-自动调整 Tauri 窗口大小以适应内容。使用 `ResizeObserver` 和 `MutationObserver` 监听内容变化，测量内容高度后加上标题栏高度（36px），调用 Tauri API 调整窗口尺寸。内置 4px 死区防止抖动。使用 `requestAnimationFrame` 节流更新。
+用途：根据内容高度自动调整当前 widget 窗口高度，适合内容高度随数据变化的插件。
 
-### 签名
-
-```ts
-function useAutoResize(containerRef: React.RefObject<HTMLElement | null>): void;
-```
-
-### 用法
+典型用法：
 
 ```tsx
 import { useRef } from "react";
 import { useAutoResize } from "../../widgets/useAutoResize";
 
-export default function MyPanel() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  useAutoResize(containerRef);
-
-  return (
-    <div ref={containerRef}>
-      {/* 你的内容 */}
-    </div>
-  );
+export default function ExamplePanel() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useAutoResize(rootRef);
+  return <div ref={rootRef}>...</div>;
 }
 ```
 
-### 工作原理
+注意：
 
-1. 组件挂载后，通过 `loadSettings()` 读取全局 `cardWidth`（默认 360px）
-2. 使用 `ResizeObserver` 监听容器元素的尺寸变化
-3. 使用 `MutationObserver` 监听子节点增删和属性变化
-4. 测量内容高度（遍历子元素的 `getBoundingClientRect`，取最大底部偏移）
-5. 加上 `HEADER_H`（36px）得到总高度，最小保证 60px
-6. 如果高度变化超过 4px 死区，调用 `win.setSize(new LogicalSize(cardWidth, total))`
-7. 窗口折叠时不调整尺寸
-8. 使用 `requestAnimationFrame` 节流，避免频繁调用
+- 传入的 ref 必须绑定到内容根节点。
+- 内容频繁变化时要避免布局抖动。
+- 固定尺寸插件可以不使用。
 
-### 注意事项
+## `WidgetProvider` / `WidgetContext`
 
-- 容器 ref 必须指向实际渲染的根元素
-- **4/5 的现有插件使用此 hook**（system-monitor、clipboard-history、page-notes、amkr、music-player）
-- Git 插件因固定高度 800px 而未使用
-- 如果你的内容高度固定不变，可以不用此 hook，直接在 manifest 中设置 `defaultHeight`
+位置：`src/lib/context.tsx`、`src/widgets/WidgetContext.ts`
 
----
+宿主在 `src/App.tsx` 中用 `WidgetProvider` 包裹插件，向插件提供：
 
-## useWidget
+- `refresh()`：请求刷新。
+- `showResult(message)`：展示成功/结果信息。
+- `showError(message)`：展示错误信息。
+- `onStatusChange(status)`：报告状态文本。
 
-**来源**：`src/lib/context.tsx`
-
-访问应用级 Widget 上下文，提供刷新、消息提示和状态通知功能。由 `WidgetProvider` 提供，包裹在 `App.tsx` 的最外层。
-
-### 签名
-
-```ts
-interface WidgetContext {
-  refresh: () => Promise<void>;           // 触发当前挂件的完整数据刷新
-  showResult: (msg: string) => void;      // 显示成功提示（console.log）
-  showError: (msg: string) => void;       // 显示错误提示（console.error）
-  onStatusChange: (status: string | null) => void; // 更新窗口副标题
-}
-
-function useWidget(): WidgetContext;
-```
-
-### 用法
-
-```tsx
-import { useWidget } from "../../lib/context";
-
-export default function MyPanel() {
-  const { showResult, showError, onStatusChange } = useWidget();
-
-  const handleCommit = async () => {
-    try {
-      await commit(repo, message);
-      showResult("提交成功");
-      onStatusChange("main");  // 更新窗口副标题
-    } catch (e) {
-      showError("提交失败: " + e);
-    }
-  };
-
-  return <button onClick={handleCommit}>提交</button>;
-}
-```
-
-### 各方法说明
-
-| 方法 | 用途 | 典型场景 |
-|------|------|---------|
-| `refresh()` | 触发当前挂件的完整数据刷新 | 目前为 no-op，预留接口 |
-| `showResult(msg)` | 显示成功提示 | 操作成功后的反馈 |
-| `showError(msg)` | 显示错误提示 | 捕获异常后的反馈 |
-| `onStatusChange(status)` | 更新窗口副标题 | 显示当前分支、连接状态等 |
-
-### 注意事项
-
-- 目前只有 Git 插件使用此 hook
-- `onStatusChange(null)` 清除副标题
-- 这些方法来自 `App.tsx` 中的 `WidgetProvider`
-- `showResult` 和 `showError` 当前实现为 `console.log` / `console.error`
-
----
-
-## useWidgetContextMenu
-
-**来源**：`src/widgets/WidgetContext.ts`
-
-为插件注册自定义右键菜单项。组件卸载时自动清除。
-
-### 签名
-
-```ts
-interface ContextMenuItem {
-  label: string;       // 菜单项文字
-  icon?: string;       // Emoji 图标
-  onClick: () => void; // 点击回调
-  danger?: boolean;    // 红色危险样式
-}
-
-function useWidgetContextMenu(items: ContextMenuItem[]): void;
-```
-
-### 用法
-
-```tsx
-import { useWidgetContextMenu } from "../../widgets/WidgetContext";
-
-export default function MyPanel() {
-  useWidgetContextMenu([
-    { label: "刷新", icon: "🔄", onClick: () => fetchData() },
-    { label: "清空", icon: "🗑️", danger: true, onClick: () => clearAll() },
-  ]);
-
-  return <div>...</div>;
-}
-```
-
-### 注意事项
-
-- 传入的 items 数组会在每次渲染时替换之前的菜单项（而非追加）
-- 组件卸载时自动调用 `registerContextMenuItems([])` 清除
-- 菜单项在用户右键挂件主体区域时弹出（标题栏区域不触发）
-- 默认包含「关闭挂件」菜单项（sequence 模式下隐藏）
-- 内部使用 `useRef` 保持稳定引用，避免不必要的 effect 重触发
-
----
-
-## useWidgetContext
-
-**来源**：`src/widgets/WidgetContext.ts`
-
-读取 WidgetShell 提供的上下文，包括折叠状态和已注册的菜单项。
-
-### 签名
-
-```ts
-interface WidgetContextValue {
-  collapsed: boolean;
-  contextMenuItems: ContextMenuItem[];
-  registerContextMenuItems: (items: ContextMenuItem[]) => void;
-}
-
-function useWidgetContext(): WidgetContextValue;
-```
-
-### 用法
+使用方式：
 
 ```tsx
 import { useWidgetContext } from "../../widgets/WidgetContext";
 
-export default function MyPanel() {
-  const { collapsed } = useWidgetContext();
-
-  return (
-    <div>
-      {collapsed ? "已折叠" : "展开内容"}
-    </div>
-  );
+export default function ExamplePanel() {
+  const { showError } = useWidgetContext();
+  return <button onClick={() => showError("操作失败")}>测试</button>;
 }
 ```
 
-### 注意事项
+如果插件不需要宿主反馈，可以不使用。
 
-- 一般不需要直接使用此 hook，`useWidgetContextMenu` 已封装了常见的注册逻辑
-- `collapsed` 状态由 `WidgetShell` 管理，当用户点击折叠按钮时切换
-- 折叠时 `WidgetShell` 会将 `.widget-body` 设为 `display: none`，所以你的组件通常不需要感知折叠状态
+## 右键菜单
 
----
+`WidgetShell` 支持 context menu 注册。适合插件向标题栏或窗口区域注入自定义操作。
 
-## Hook 使用决策
+建议：
 
+- 菜单项文案简短。
+- 卸载组件时自动移除菜单项。
+- 不要用右键菜单承载核心路径，核心操作仍应在插件 UI 中可见。
+
+## 标题栏按钮
+
+`WidgetShell` 根据插件 registry 字段控制按钮：
+
+- `showCloseButton`
+- `showCollapseButton`
+- `showAttachButton`
+- `defaultAttachEnabled`
+- `defaultAttachRemember`
+- `defaultWhitelist`
+
+插件通常不需要直接调用 `CloseButton`、`CollapseButton`、`AttachButton`、`RememberButton`。只需在 `manifest.json` 和 `index.tsx` 中声明行为。
+
+## Tauri hooks 与监听 cleanup
+
+如果插件直接使用 Tauri event：
+
+```tsx
+useEffect(() => {
+  let unlisten: (() => void) | undefined;
+  listen("plugin://event", handler).then((fn) => { unlisten = fn; });
+  return () => unlisten?.();
+}, []);
 ```
-需要自动调整窗口大小？
-  └─ 是 → useAutoResize(containerRef)
-  └─ 否 → 在 manifest 中设置固定 defaultHeight
 
-需要显示成功/错误消息或更新副标题？
-  └─ 是 → useWidget()
-  └─ 否 → 不需要
+如果插件使用 interval：
 
-需要自定义右键菜单？
-  └─ 是 → useWidgetContextMenu(items)
-  └─ 否 → 不需要
-
-需要读取折叠状态？
-  └─ 是 → useWidgetContext()
-  └─ 否 → 不需要
+```tsx
+useEffect(() => {
+  const interval = setInterval(loadData, 1000);
+  return () => clearInterval(interval);
+}, []);
 ```
 
-## 两个 Context 的层级关系
+所有监听、定时器、WebSocket、动画循环都必须 cleanup。
 
-```
-App.tsx
-├── WidgetProvider (应用级)        ← useWidget() 从这里读取
-│   └── WidgetShell
-│       └── WidgetProvider (挂件级) ← useWidgetContext() / useWidgetContextMenu() 从这里读取
-│           └── <Component />
-```
+## Hook 选择建议
 
-- `WidgetProvider`（应用级）在 `App.tsx` 中包裹，提供 `refresh/showResult/showError/onStatusChange`
-- `WidgetProvider`（挂件级）在 `WidgetShell` 中包裹，提供 `collapsed/contextMenuItems/registerContextMenuItems`
-- 两个 Provider 使用同一个 `createContext` 工厂，但提供不同的值
+| 场景 | 建议 |
+| --- | --- |
+| 内容高度动态变化 | `useAutoResize` |
+| 需要向用户显示错误 | `useWidgetContext().showError` 或插件内错误条 |
+| 需要额外操作菜单 | 右键菜单 context |
+| 周期性刷新 | `useEffect + setInterval + cleanup` |
+| 后端主动通知 | Tauri `listen + cleanup` |

@@ -16,6 +16,8 @@ export interface AppSettings {
   cardWidth: number;
   logMaxCount: number;
   alwaysOnTop: boolean;
+  /** Start the app automatically when Windows signs in */
+  startOnBoot: boolean;
   pullRebase: boolean;
   /** Saved repository paths */
   savedRepos: string[];
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardWidth: 360,
   logMaxCount: 50,
   alwaysOnTop: true,
+  startOnBoot: false,
   pullRebase: true,
   savedRepos: [],
   panelVisibility: {},

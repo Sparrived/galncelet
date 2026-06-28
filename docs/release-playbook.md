@@ -1,4 +1,4 @@
-﻿# Release Playbook
+# Release Playbook
 
 ## Fast path
 
@@ -7,14 +7,14 @@
 3. Run the local release build:
 
 ```powershell
-npm run release -- -Version 0.1.0 -Tag v0.1.0
+npm run release -- -Version 1.0.0 -Tag v1.0.0
 ```
 
 4. If the build looks good, create the tag and push it:
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 5. GitHub Actions will build the release, verify artifacts, and publish the GitHub Release automatically.
@@ -25,7 +25,7 @@ Use this when the tag already exists and you want to reuse it:
 
 - open the `Release` workflow in GitHub Actions
 - choose `Run workflow`
-- enter the existing tag, such as `v0.1.0`
+- enter the existing tag, such as `v1.0.0`
 - keep `publish` enabled if you want the workflow to create or update the release
 - set `draft` or `prerelease` as needed
 
