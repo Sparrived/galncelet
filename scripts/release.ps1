@@ -89,6 +89,26 @@ function Set-CargoPackageVersion {
     $lines | Set-Content $Path -Encoding UTF8
 }
 
+
+function Get-RelativePath {
+    param(
+        [string]$BasePath,
+        [string]$Path
+    )
+
+    $baseFullPath = [System.IO.Path]::GetFullPath($BasePath)
+    $targetFullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not $baseFullPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $baseFullPath += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    $baseUri = New-Object System.Uri($baseFullPath)
+    $targetUri = New-Object System.Uri($targetFullPath)
+    return [System.Uri]::UnescapeDataString(
+        $baseUri.MakeRelativeUri($targetUri).ToString()
+    ) -replace '/', [System.IO.Path]::DirectorySeparatorChar
+}
+
 function Get-ReleaseArtifacts {
     $patterns = @("*.msi", "*.exe", "*.nsis.zip", "*.app.tar.gz", "*.AppImage", "*.deb", "*.rpm", "*.dmg")
     $artifacts = @()
@@ -135,7 +155,7 @@ function New-ReleaseChecksumFile {
 
     $checksums = foreach ($artifact in $artifacts) {
         $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
-        $relativePath = [System.IO.Path]::GetRelativePath($Root, $artifact.FullName)
+        $relativePath = Get-RelativePath $Root $artifact.FullName
         "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), ($relativePath -replace '\\', '/')
     }
 
