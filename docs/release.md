@@ -1,6 +1,14 @@
-# Release
+﻿# Release
 
 This project now uses one reusable flow for local builds and GitHub Actions releases.
+
+## Before you release
+
+- make sure `master` is clean and up to date
+- bump the version in `package.json` if you want a new semantic version
+- ensure the submodule `src/addons` is pushed first when it has changes
+- confirm the release tag will be `v<version>`
+- verify GitHub Actions can use the `GITHUB_TOKEN` with `contents: write`
 
 ## Local release build
 

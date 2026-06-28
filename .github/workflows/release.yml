@@ -1,4 +1,4 @@
-name: Release
+﻿name: Release
 
 on:
   push:
@@ -10,11 +10,6 @@ on:
         description: "Release tag, for example v0.1.0"
         required: true
         type: string
-      publish:
-        description: "Create or update the GitHub Release"
-        required: false
-        default: true
-        type: boolean
       draft:
         description: "Create the GitHub Release as a draft"
         required: false
@@ -30,9 +25,33 @@ permissions:
   contents: write
 
 jobs:
+  resolve:
+    name: Resolve release tag
+    runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $shouldPublish = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+            $shouldPublish = "true"
+          }
+          if (-not $tag.StartsWith("v")) {
+            throw "Release tag must start with 'v'. Received '$tag'."
+          }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "should_publish=$shouldPublish" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
   build-release:
     name: Build release artifacts
     runs-on: windows-latest
+    needs: resolve
 
     steps:
       - name: Checkout
@@ -40,19 +59,6 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-
-      - name: Resolve release tag
-        id: release
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag }}"
-          }
-          if (-not $tag.StartsWith("v")) {
-            throw "Release tag must start with 'v'. Received '$tag'."
-          }
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -73,22 +79,21 @@ jobs:
       - name: Build release package
         shell: pwsh
         run: |
-          .\scripts\release.ps1 -Tag "${{ steps.release.outputs.tag }}" -AllowDirty -SkipRelease
+          .\scripts\release.ps1 -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: galncelet-${{ steps.release.outputs.tag }}
+          name: galncelet-${{ needs.resolve.outputs.tag }}
           path: |
             src-tauri/target/release/galncelet.exe
             src-tauri/target/release/bundle/**
           if-no-files-found: error
 
-  publish-release:
-    name: Publish GitHub Release
+  verify-release:
+    name: Verify release artifacts
     runs-on: windows-latest
-    needs: build-release
-    if: github.event_name == 'push' || inputs.publish == true
+    needs: [resolve, build-release]
 
     steps:
       - name: Checkout
@@ -100,7 +105,40 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: galncelet-${{ github.ref_name != '' && github.ref_name || inputs.tag }}
+          name: galncelet-${{ needs.resolve.outputs.tag }}
+          path: release-artifacts
+
+      - name: Verify checksum file exists
+        shell: pwsh
+        run: |
+          $checksum = Get-ChildItem -Path release-artifacts -Recurse -Filter SHA256SUMS.txt | Select-Object -First 1
+          if (-not $checksum) {
+            throw "SHA256SUMS.txt was not found in the downloaded release artifacts."
+          }
+          Write-Host "Found checksum file: $($checksum.FullName)"
+
+      - name: Verify GUI subsystem script still parses
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content scripts/release.ps1 -Raw)) | Out-Null
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: windows-latest
+    needs: [resolve, build-release, verify-release]
+    if: github.event_name == 'push' || needs.resolve.outputs.should_publish == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: galncelet-${{ needs.resolve.outputs.tag }}
           path: release-artifacts
 
       - name: Publish GitHub Release
@@ -108,16 +146,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag }}"
-          }
-          if (-not $tag.StartsWith("v")) {
-            throw "Release tag must start with 'v'. Received '$tag'."
-          }
-
-          $draft = [System.Convert]::ToBoolean("${{ inputs.draft }}")
-          $prerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+          $tag = "${{ needs.resolve.outputs.tag }}"
+          $draft = [System.Convert]::ToBoolean("${{ github.event_name == 'workflow_dispatch' && inputs.draft || 'false' }}")
+          $prerelease = [System.Convert]::ToBoolean("${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || 'false' }}")
           $artifactRoot = Join-Path $PWD "release-artifacts"
           $files = Get-ChildItem -Path $artifactRoot -Recurse -File | ForEach-Object { $_.FullName }
 
