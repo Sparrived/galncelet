@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::Manager;
 
@@ -93,8 +93,7 @@ fn settings_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    fs::create_dir_all(&data_dir)
-        .map_err(|e| format!("Failed to create app data dir: {e}"))?;
+    fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create app data dir: {e}"))?;
     Ok(data_dir.join("settings.json"))
 }
 
@@ -106,8 +105,7 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
     if !path.exists() {
         return Ok(AppSettings::default());
     }
-    let data = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read settings: {e}"))?;
+    let data = fs::read_to_string(&path).map_err(|e| format!("Failed to read settings: {e}"))?;
     let settings: AppSettings =
         serde_json::from_str(&data).map_err(|e| format!("Failed to parse settings: {e}"))?;
     Ok(settings)
@@ -121,6 +119,101 @@ pub fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(),
         serde_json::to_string_pretty(&settings).map_err(|e| format!("Failed to serialize: {e}"))?;
     fs::write(&path, data).map_err(|e| format!("Failed to write settings: {e}"))?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn quote_windows_path(path: &Path) -> String {
+    format!("\"{}\"", path.display())
+}
+
+#[cfg(windows)]
+fn escape_single_quoted_powershell(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn find_dev_project_root(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors()
+        .find(|path| path.join("package.json").exists() && path.join("src-tauri").exists())
+        .map(Path::to_path_buf)
+}
+
+#[cfg(windows)]
+fn dev_startup_powershell(project_root: &Path, exe: &Path) -> String {
+    let root = escape_single_quoted_powershell(&project_root.display().to_string());
+    let exe = escape_single_quoted_powershell(&exe.display().to_string());
+
+    format!(
+        r#"$ErrorActionPreference = 'SilentlyContinue'
+$projectRoot = '{root}'
+$appExe = '{exe}'
+$devUrl = 'http://127.0.0.1:1420'
+
+function Test-FrontendReady {{
+    try {{
+        Invoke-WebRequest -UseBasicParsing -Uri $devUrl -TimeoutSec 1 | Out-Null
+        return $true
+    }} catch {{
+        return $false
+    }}
+}}
+
+if (-not (Test-FrontendReady)) {{
+    Start-Process -FilePath 'npm.cmd' -ArgumentList @('run', 'dev', '--', '--host', '127.0.0.1') -WorkingDirectory $projectRoot -WindowStyle Hidden
+}}
+
+for ($i = 0; $i -lt 60; $i++) {{
+    if (Test-FrontendReady) {{ break }}
+    Start-Sleep -Milliseconds 500
+}}
+
+Start-Process -FilePath $appExe -WorkingDirectory $projectRoot -WindowStyle Hidden
+"#
+    )
+}
+
+#[cfg(windows)]
+fn dev_startup_vbs(ps1_path: &Path) -> String {
+    let ps1 = ps1_path.display().to_string().replace('"', "\"\"");
+    format!(
+        "Set shell = CreateObject(\"WScript.Shell\")\r\nshell.Run \"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"\"{ps1}\"\"\", 0, False\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn write_dev_startup_launcher(app: &tauri::AppHandle, exe: &Path) -> Result<PathBuf, String> {
+    let project_root = find_dev_project_root(exe).ok_or_else(|| {
+        format!(
+            "Failed to find project root from executable: {}",
+            exe.display()
+        )
+    })?;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create app data dir: {e}"))?;
+
+    let ps1_path = data_dir.join("startup-dev.ps1");
+    let vbs_path = data_dir.join("startup-dev.vbs");
+    fs::write(&ps1_path, dev_startup_powershell(&project_root, exe))
+        .map_err(|e| format!("Failed to write dev startup PowerShell launcher: {e}"))?;
+    fs::write(&vbs_path, dev_startup_vbs(&ps1_path))
+        .map_err(|e| format!("Failed to write dev startup VBScript launcher: {e}"))?;
+    Ok(vbs_path)
+}
+
+#[cfg(windows)]
+fn startup_registry_command(app: &tauri::AppHandle, exe: &Path) -> Result<String, String> {
+    if cfg!(debug_assertions) {
+        let launcher = write_dev_startup_launcher(app, exe)?;
+        Ok(format!(
+            "wscript.exe //B //NoLogo {}",
+            quote_windows_path(&launcher)
+        ))
+    } else {
+        Ok(quote_windows_path(exe))
+    }
 }
 
 /// Tauri command: enable or disable Windows login startup.
@@ -143,7 +236,7 @@ pub fn set_start_on_boot(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
         if enabled {
             let exe = env::current_exe()
                 .map_err(|e| format!("Failed to resolve current executable: {e}"))?;
-            let command = format!("\"{}\"", exe.display());
+            let command = startup_registry_command(&app, &exe)?;
             run_key
                 .set_value(&app_name, &command)
                 .map_err(|e| format!("Failed to enable startup: {e}"))?;
@@ -183,6 +276,57 @@ pub fn set_start_on_boot(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
     save_settings(app, settings)?;
 
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_project_root_from_debug_exe_path() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let exe = root
+            .join("src-tauri")
+            .join("target")
+            .join("debug")
+            .join("galncelet.exe");
+
+        assert_eq!(find_dev_project_root(&exe), Some(root));
+    }
+
+    #[test]
+    fn dev_launcher_starts_frontend_hidden_before_app() {
+        let root = PathBuf::from(r"D:\Code\galncelet");
+        let exe = root
+            .join("src-tauri")
+            .join("target")
+            .join("debug")
+            .join("galncelet.exe");
+
+        let script = dev_startup_powershell(&root, &exe);
+
+        assert!(script.contains("Start-Process -FilePath 'npm.cmd'"));
+        assert!(script.contains("-WindowStyle Hidden"));
+        assert!(script.contains("'--host', '127.0.0.1'"));
+        assert!(
+            script.find("Start-Process -FilePath 'npm.cmd'").unwrap()
+                < script.find("Start-Process -FilePath $appExe").unwrap()
+        );
+    }
+
+    #[test]
+    fn vbs_launcher_runs_powershell_without_a_console_window() {
+        let ps1 = PathBuf::from(r"C:\Users\Me\AppData\Roaming\Galncelet\startup-dev.ps1");
+
+        let script = dev_startup_vbs(&ps1);
+
+        assert!(script
+            .contains("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden"));
+        assert!(script.contains(", 0, False"));
+    }
 }
 
 /// Tauri command: set plugin visibility in settings (used by close button).
@@ -233,10 +377,7 @@ pub fn set_plugin_hotkey(
 /// Tauri command: set the widget sequence order.
 /// Only hides/shows windows and does not change panel_visibility.
 #[tauri::command]
-pub fn set_widget_sequence(
-    app: tauri::AppHandle,
-    sequence: Vec<String>,
-) -> Result<(), String> {
+pub fn set_widget_sequence(app: tauri::AppHandle, sequence: Vec<String>) -> Result<(), String> {
     let mut settings = load_settings(app.clone())?;
     settings.widget_sequence = sequence.clone();
     save_settings(app.clone(), settings.clone())?;
@@ -269,10 +410,7 @@ pub fn set_widget_sequence(
 
 /// Tauri command: set or clear the sequence cycle hotkey.
 #[tauri::command]
-pub fn set_sequence_hotkey(
-    app: tauri::AppHandle,
-    hotkey: Option<String>,
-) -> Result<(), String> {
+pub fn set_sequence_hotkey(app: tauri::AppHandle, hotkey: Option<String>) -> Result<(), String> {
     let mut settings = load_settings(app.clone())?;
     settings.sequence_hotkey = hotkey;
     save_settings(app.clone(), settings.clone())?;
@@ -298,37 +436,90 @@ fn parse_shortcut(s: &str) -> Option<Shortcut> {
         }
     }
     let code = match code_str.as_str() {
-        "a" => Code::KeyA, "b" => Code::KeyB, "c" => Code::KeyC, "d" => Code::KeyD,
-        "e" => Code::KeyE, "f" => Code::KeyF, "g" => Code::KeyG, "h" => Code::KeyH,
-        "i" => Code::KeyI, "j" => Code::KeyJ, "k" => Code::KeyK, "l" => Code::KeyL,
-        "m" => Code::KeyM, "n" => Code::KeyN, "o" => Code::KeyO, "p" => Code::KeyP,
-        "q" => Code::KeyQ, "r" => Code::KeyR, "s" => Code::KeyS, "t" => Code::KeyT,
-        "u" => Code::KeyU, "v" => Code::KeyV, "w" => Code::KeyW, "x" => Code::KeyX,
-        "y" => Code::KeyY, "z" => Code::KeyZ,
-        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
-        "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
-        "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8, "9" => Code::Digit9,
-        "f1" => Code::F1, "f2" => Code::F2, "f3" => Code::F3, "f4" => Code::F4,
-        "f5" => Code::F5, "f6" => Code::F6, "f7" => Code::F7, "f8" => Code::F8,
-        "f9" => Code::F9, "f10" => Code::F10, "f11" => Code::F11, "f12" => Code::F12,
-        "space" => Code::Space, "tab" => Code::Tab, "enter" => Code::Enter,
-        "escape" | "esc" => Code::Escape, "backspace" => Code::Backspace,
-        "slash" => Code::Slash, "backslash" => Code::Backslash,
-        "period" | "." => Code::Period, "comma" | "," => Code::Comma,
-        "semicolon" | ";" => Code::Semicolon, "quote" | "'" => Code::Quote,
-        "bracketleft" | "[" => Code::BracketLeft, "bracketright" | "]" => Code::BracketRight,
-        "minus" | "-" => Code::Minus, "equal" | "=" => Code::Equal,
+        "a" => Code::KeyA,
+        "b" => Code::KeyB,
+        "c" => Code::KeyC,
+        "d" => Code::KeyD,
+        "e" => Code::KeyE,
+        "f" => Code::KeyF,
+        "g" => Code::KeyG,
+        "h" => Code::KeyH,
+        "i" => Code::KeyI,
+        "j" => Code::KeyJ,
+        "k" => Code::KeyK,
+        "l" => Code::KeyL,
+        "m" => Code::KeyM,
+        "n" => Code::KeyN,
+        "o" => Code::KeyO,
+        "p" => Code::KeyP,
+        "q" => Code::KeyQ,
+        "r" => Code::KeyR,
+        "s" => Code::KeyS,
+        "t" => Code::KeyT,
+        "u" => Code::KeyU,
+        "v" => Code::KeyV,
+        "w" => Code::KeyW,
+        "x" => Code::KeyX,
+        "y" => Code::KeyY,
+        "z" => Code::KeyZ,
+        "0" => Code::Digit0,
+        "1" => Code::Digit1,
+        "2" => Code::Digit2,
+        "3" => Code::Digit3,
+        "4" => Code::Digit4,
+        "5" => Code::Digit5,
+        "6" => Code::Digit6,
+        "7" => Code::Digit7,
+        "8" => Code::Digit8,
+        "9" => Code::Digit9,
+        "f1" => Code::F1,
+        "f2" => Code::F2,
+        "f3" => Code::F3,
+        "f4" => Code::F4,
+        "f5" => Code::F5,
+        "f6" => Code::F6,
+        "f7" => Code::F7,
+        "f8" => Code::F8,
+        "f9" => Code::F9,
+        "f10" => Code::F10,
+        "f11" => Code::F11,
+        "f12" => Code::F12,
+        "space" => Code::Space,
+        "tab" => Code::Tab,
+        "enter" => Code::Enter,
+        "escape" | "esc" => Code::Escape,
+        "backspace" => Code::Backspace,
+        "slash" => Code::Slash,
+        "backslash" => Code::Backslash,
+        "period" | "." => Code::Period,
+        "comma" | "," => Code::Comma,
+        "semicolon" | ";" => Code::Semicolon,
+        "quote" | "'" => Code::Quote,
+        "bracketleft" | "[" => Code::BracketLeft,
+        "bracketright" | "]" => Code::BracketRight,
+        "minus" | "-" => Code::Minus,
+        "equal" | "=" => Code::Equal,
         "backquote" | "`" => Code::Backquote,
-        "up" => Code::ArrowUp, "down" => Code::ArrowDown,
-        "left" => Code::ArrowLeft, "right" => Code::ArrowRight,
-        "delete" => Code::Delete, "insert" => Code::Insert,
-        "home" => Code::Home, "end" => Code::End,
-        "pageup" => Code::PageUp, "pagedown" => Code::PageDown,
-        "numpad0" => Code::Numpad0, "numpad1" => Code::Numpad1,
-        "numpad2" => Code::Numpad2, "numpad3" => Code::Numpad3,
-        "numpad4" => Code::Numpad4, "numpad5" => Code::Numpad5,
-        "numpad6" => Code::Numpad6, "numpad7" => Code::Numpad7,
-        "numpad8" => Code::Numpad8, "numpad9" => Code::Numpad9,
+        "up" => Code::ArrowUp,
+        "down" => Code::ArrowDown,
+        "left" => Code::ArrowLeft,
+        "right" => Code::ArrowRight,
+        "delete" => Code::Delete,
+        "insert" => Code::Insert,
+        "home" => Code::Home,
+        "end" => Code::End,
+        "pageup" => Code::PageUp,
+        "pagedown" => Code::PageDown,
+        "numpad0" => Code::Numpad0,
+        "numpad1" => Code::Numpad1,
+        "numpad2" => Code::Numpad2,
+        "numpad3" => Code::Numpad3,
+        "numpad4" => Code::Numpad4,
+        "numpad5" => Code::Numpad5,
+        "numpad6" => Code::Numpad6,
+        "numpad7" => Code::Numpad7,
+        "numpad8" => Code::Numpad8,
+        "numpad9" => Code::Numpad9,
         _ => return None,
     };
     Some(Shortcut::new(Some(mods), code))
@@ -341,18 +532,27 @@ pub fn register_all_hotkeys(app: &tauri::AppHandle, settings: &AppSettings) {
         let shortcut = match parse_shortcut(hotkey_str) {
             Some(s) => s,
             None => {
-                eprintln!("[hotkey] invalid shortcut for {}: {}", plugin_id, hotkey_str);
+                eprintln!(
+                    "[hotkey] invalid shortcut for {}: {}",
+                    plugin_id, hotkey_str
+                );
                 continue;
             }
         };
         let pid = plugin_id.clone();
         let app_handle = app.clone();
-        if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                toggle_plugin_visibility(&app_handle, &pid);
-            }
-        }) {
-            eprintln!("[hotkey] failed to register {} for {}: {}", hotkey_str, plugin_id, e);
+        if let Err(e) =
+            app.global_shortcut()
+                .on_shortcut(shortcut, move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_plugin_visibility(&app_handle, &pid);
+                    }
+                })
+        {
+            eprintln!(
+                "[hotkey] failed to register {} for {}: {}",
+                hotkey_str, plugin_id, e
+            );
         } else {
             println!("[hotkey] registered {} → {}", hotkey_str, plugin_id);
         }
@@ -369,14 +569,24 @@ pub fn register_all_hotkeys(app: &tauri::AppHandle, settings: &AppSettings) {
                 }
             };
             let app_handle = app.clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    cycle_sequence(&app_handle);
-                }
-            }) {
-                eprintln!("[hotkey] failed to register sequence shortcut {}: {}", hk, e);
+            if let Err(e) =
+                app.global_shortcut()
+                    .on_shortcut(shortcut, move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            cycle_sequence(&app_handle);
+                        }
+                    })
+            {
+                eprintln!(
+                    "[hotkey] failed to register sequence shortcut {}: {}",
+                    hk, e
+                );
             } else {
-                println!("[hotkey] registered sequence {} ({} plugins)", hk, settings.widget_sequence.len());
+                println!(
+                    "[hotkey] registered sequence {} ({} plugins)",
+                    hk,
+                    settings.widget_sequence.len()
+                );
             }
         }
     }
@@ -410,7 +620,10 @@ fn toggle_plugin_visibility(app: &tauri::AppHandle, plugin_id: &str) {
             println!("[hotkey] shown {}", plugin_id);
         }
     } else {
-        println!("[hotkey] widget window {} not found, open via manage page", plugin_id);
+        println!(
+            "[hotkey] widget window {} not found, open via manage page",
+            plugin_id
+        );
     }
 }
 
@@ -425,7 +638,9 @@ fn cycle_sequence(app: &tauri::AppHandle) {
         Err(_) => return,
     };
     let seq = &settings.widget_sequence;
-    if seq.is_empty() { return; }
+    if seq.is_empty() {
+        return;
+    }
 
     let idx = SEQUENCE_INDEX.load(Ordering::Relaxed);
     let safe_idx = idx % seq.len();
@@ -433,7 +648,8 @@ fn cycle_sequence(app: &tauri::AppHandle) {
 
     // Get position from the currently visible widget (the one being replaced)
     let current_label = format!("widget-{}", current_id);
-    let pos: Option<(i32, i32)> = app.get_webview_window(&current_label)
+    let pos: Option<(i32, i32)> = app
+        .get_webview_window(&current_label)
         .and_then(|win| win.outer_position().ok())
         .map(|p| (p.x, p.y));
 
@@ -454,14 +670,18 @@ fn cycle_sequence(app: &tauri::AppHandle) {
         let label = format!("widget-{}", id);
         if let Some(win) = app.get_webview_window(&label) {
             if let Some((x, y)) = pos {
-                let _ = win.set_position(tauri::Position::Physical(
-                    tauri::PhysicalPosition { x, y },
-                ));
+                let _ =
+                    win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
             }
             let _ = win.show();
             let _ = win.set_focus();
             SEQUENCE_INDEX.store(idx_to_show, Ordering::Relaxed);
-            println!("[sequence] switched to {} ({}/{})", id, idx_to_show + 1, seq.len());
+            println!(
+                "[sequence] switched to {} ({}/{})",
+                id,
+                idx_to_show + 1,
+                seq.len()
+            );
             return;
         }
         println!("[sequence] widget {} not found, skipping", id);

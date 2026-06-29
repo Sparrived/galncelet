@@ -44,15 +44,37 @@ function Get-PackageVersion {
     return [string]$packageJson.version
 }
 
+function Set-Utf8NoBomContent {
+    param(
+        [string]$Path,
+        [string[]]$Value
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($Path, $Value, $encoding)
+}
+
 function Set-JsonVersion {
     param(
         [string]$Path,
         [string]$NewVersion
     )
 
-    $json = Get-Content $Path -Raw | ConvertFrom-Json
-    $json.version = $NewVersion
-    $json | ConvertTo-Json -Depth 100 | Set-Content $Path -Encoding UTF8
+    $lines = Get-Content $Path
+    $updated = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*"version"\s*:') {
+            $indent = [regex]::Match($lines[$i], '^\s*').Value
+            $comma = if ($lines[$i].TrimEnd().EndsWith(',')) { ',' } else { '' }
+            $lines[$i] = '{0}"version": "{1}"{2}' -f $indent, $NewVersion, $comma
+            $updated = $true
+            break
+        }
+    }
+    if (-not $updated) {
+        throw "Could not find version field in $Path."
+    }
+    Set-Utf8NoBomContent $Path $lines
 }
 
 function Set-CargoPackageVersion {
@@ -86,7 +108,7 @@ function Set-CargoPackageVersion {
         throw "Could not find [package] version in $Path."
     }
 
-    $lines | Set-Content $Path -Encoding UTF8
+    Set-Utf8NoBomContent $Path $lines
 }
 
 
@@ -110,12 +132,15 @@ function Get-RelativePath {
 }
 
 function Get-ReleaseArtifacts {
+    param([string]$ReleaseVersion)
+
     $patterns = @("*.msi", "*.exe", "*.nsis.zip", "*.app.tar.gz", "*.AppImage", "*.deb", "*.rpm", "*.dmg")
     $artifacts = @()
 
     if (Test-Path $BundleDir) {
         foreach ($pattern in $patterns) {
-            $artifacts += Get-ChildItem -Path $BundleDir -Recurse -File -Filter $pattern
+            $artifacts += Get-ChildItem -Path $BundleDir -Recurse -File -Filter $pattern |
+                Where-Object { $_.Name -like "*$ReleaseVersion*" }
         }
     }
 
@@ -148,7 +173,9 @@ function Test-WindowsGuiSubsystem {
 }
 
 function New-ReleaseChecksumFile {
-    $artifacts = @(Get-ReleaseArtifacts)
+    param([string]$ReleaseVersion)
+
+    $artifacts = @(Get-ReleaseArtifacts $ReleaseVersion)
     if ($artifacts.Count -eq 0) {
         throw "No release artifacts were found under $BundleDir."
     }
@@ -166,13 +193,14 @@ function New-ReleaseChecksumFile {
 function Publish-GitHubRelease {
     param(
         [string]$ReleaseTag,
+        [string]$ReleaseVersion,
         [bool]$IsDraft,
         [bool]$IsPrerelease
     )
 
     Assert-Command "gh"
 
-    $artifactPaths = @(Get-ReleaseArtifacts | ForEach-Object { $_.FullName })
+    $artifactPaths = @(Get-ReleaseArtifacts $ReleaseVersion | ForEach-Object { $_.FullName })
     $artifactPaths += $ChecksumsPath
 
     $releaseExists = $false
@@ -240,12 +268,12 @@ try {
     }
 
     Invoke-Step "Writing release checksums" {
-        New-ReleaseChecksumFile | Out-Null
+        New-ReleaseChecksumFile $releaseVersion | Out-Null
     }
 
     if ($Publish -and -not $SkipRelease) {
         Invoke-Step "Publishing GitHub Release $releaseTag" {
-            Publish-GitHubRelease -ReleaseTag $releaseTag -IsDraft ([bool]$Draft) -IsPrerelease ([bool]$Prerelease)
+            Publish-GitHubRelease -ReleaseTag $releaseTag -ReleaseVersion $releaseVersion -IsDraft ([bool]$Draft) -IsPrerelease ([bool]$Prerelease)
         }
     }
 
