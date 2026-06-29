@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "release": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1",
+    "release:offline": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1 -Offline",
     "release:publish": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1 -Publish",
     "dev:frontend": "vite --host",
     "dev:rust": "cd src-tauri && cargo run"
