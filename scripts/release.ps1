@@ -212,6 +212,30 @@ function Test-WindowsGuiSubsystem {
     }
 }
 
+
+function Get-Sha256Hash {
+    param([string]$Path)
+
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+        }
+        finally {
+            $sha.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function New-ReleaseChecksumFile {
     param(
         [string]$ReleaseVersion,
@@ -224,12 +248,12 @@ function New-ReleaseChecksumFile {
     }
 
     $checksums = foreach ($artifact in $artifacts) {
-        $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
+        $hash = Get-Sha256Hash $artifact.FullName
         $relativePath = Get-RelativePath $Root $artifact.FullName
-        "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), ($relativePath -replace '\\', '/')
+        "{0}  {1}" -f $hash, ($relativePath -replace '\\', '/')
     }
 
-    $checksums | Set-Content $ChecksumsPath -Encoding UTF8
+    Set-Utf8NoBomContent $ChecksumsPath $checksums
     return $artifacts
 }
 

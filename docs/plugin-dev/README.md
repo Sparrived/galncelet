@@ -319,3 +319,17 @@ npm run release:publish -- -Version 1.0.0 -Tag v1.0.0
 - 样式 class 使用插件前缀，避免影响宿主或其他插件。
 - Windows 专属功能有 `#[cfg(windows)]` 或降级分支。
 - `npm run build` 和 `cargo check` 通过。
+
+---
+
+## Runtime addons for third-party development
+
+The `src/addons/*` + `src-tauri/src/*` model described in this guide is the legacy built-in addon model. It is still valid for features shipped with Galncelet itself, but it requires rebuilding the main app.
+
+For third-party addons that users can install or remove by copying files, use the runtime addon model instead:
+
+- install folder: `%APPDATA%\Galncelet\addons\<addon-id>\`
+- frontend entry: `manifest.json` + `ui/index.html`
+- optional backend: sidecar executable using JSON-RPC over stdin/stdout
+
+See `docs/runtime-addons.md` for the current hot-pluggable addon protocol.

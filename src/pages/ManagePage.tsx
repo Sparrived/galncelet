@@ -1,15 +1,43 @@
 import { useEffect, useState, useRef } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { getAllPlugins, type PluginDef } from "../addons/registry";
 import {
   loadSettings, saveSettings, saveWindowState,
   setAttachWhitelist, createPluginWindow, listVisibleWindows,
   updateCardWidth, setPluginHotkey, setWidgetSequence, setSequenceHotkey,
-  type WindowEntry,
+  listRuntimeAddons, createRuntimeAddonWindow, openRuntimeAddonsDir,
+  type WindowEntry, type RuntimeAddonInfo,
   openSettingsWindow,
 } from "../lib/api";
 import type { AppSettings } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
+
+type ManagePlugin = Omit<PluginDef, "component"> & {
+  runtime?: boolean;
+  hasBackend?: boolean;
+  permissions?: string[];
+};
+
+function runtimeAddonToPlugin(addon: RuntimeAddonInfo): ManagePlugin {
+  return {
+    id: addon.id,
+    title: addon.title,
+    description: addon.description ?? undefined,
+    icon: addon.icon ?? "??",
+    defaultWidth: addon.defaultWidth ?? undefined,
+    defaultHeight: addon.defaultHeight ?? undefined,
+    showCloseButton: addon.showCloseButton ?? true,
+    showCollapseButton: addon.showCollapseButton ?? true,
+    showAttachButton: addon.showAttachButton ?? true,
+    defaultAttachEnabled: addon.defaultAttachEnabled ?? false,
+    defaultAttachRemember: addon.defaultAttachRemember ?? false,
+    defaultWhitelist: addon.defaultWhitelist,
+    runtime: true,
+    hasBackend: addon.hasBackend,
+    permissions: addon.permissions,
+  };
+}
 
 export default function ManagePage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -21,10 +49,33 @@ export default function ManagePage() {
   const [pendingDisplay, setPendingDisplay] = useState("");
   const hotkeyInputRef = useRef<HTMLDivElement>(null);
   const seqHotkeyInputRef = useRef<HTMLDivElement>(null);
-  const plugins = getAllPlugins();
+  const [runtimePlugins, setRuntimePlugins] = useState<ManagePlugin[]>([]);
+  const builtinPlugins: ManagePlugin[] = getAllPlugins().map(({ component: _component, ...plugin }) => plugin);
+  const plugins = [...builtinPlugins, ...runtimePlugins];
+
+  const refreshRuntimeAddons = async () => {
+    try {
+      const addons = await listRuntimeAddons();
+      setRuntimePlugins(addons.map(runtimeAddonToPlugin));
+    } catch (e) {
+      console.error("[runtime-addons] failed to list", e);
+      setRuntimePlugins([]);
+    }
+  };
 
   useEffect(() => {
     loadSettings().then(setSettings).catch(() => {});
+    refreshRuntimeAddons();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<RuntimeAddonInfo[]>("runtime-addons-changed", (event) => {
+      setRuntimePlugins(event.payload.map(runtimeAddonToPlugin));
+    }).then((fn) => { unlisten = fn; }).catch((e) => {
+      console.error("[runtime-addons] failed to listen", e);
+    });
+    return () => { unlisten?.(); };
   }, []);
 
   // Focus hotkey input when recording starts
@@ -62,12 +113,38 @@ export default function ManagePage() {
     if (patch.cardWidth) updateCardWidth(patch.cardWidth);
   };
 
-  const togglePlugin = async (plugin: PluginDef) => {
+  const togglePlugin = async (plugin: ManagePlugin) => {
     const vis = { ...settings.panelVisibility };
     const enabling = vis[plugin.id] !== true;
     vis[plugin.id] = enabling;
     await updateSettings({ panelVisibility: vis });
     if (enabling) {
+      if (plugin.runtime) {
+        await createRuntimeAddonWindow(plugin.id);
+      } else {
+        await createPluginWindow(
+          plugin.id, plugin.title,
+          plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
+          plugin.defaultAttachEnabled !== false,
+          plugin.defaultAttachRemember === true,
+          plugin.defaultWhitelist ?? [],
+        );
+      }
+    } else {
+      const win = await Window.getByLabel(plugin.runtime ? `runtime-addon-${plugin.id}` : `widget-${plugin.id}`);
+      if (win) { try { await win.hide(); } catch {} }
+    }
+  };
+
+  const openPlugin = async (plugin: ManagePlugin) => {
+    if (settings.panelVisibility[plugin.id] !== true) {
+      await updateSettings({
+        panelVisibility: { ...settings.panelVisibility, [plugin.id]: true },
+      });
+    }
+    if (plugin.runtime) {
+      await createRuntimeAddonWindow(plugin.id);
+    } else {
       await createPluginWindow(
         plugin.id, plugin.title,
         plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
@@ -75,25 +152,7 @@ export default function ManagePage() {
         plugin.defaultAttachRemember === true,
         plugin.defaultWhitelist ?? [],
       );
-    } else {
-      const win = await Window.getByLabel(`widget-${plugin.id}`);
-      if (win) { try { await win.hide(); } catch {} }
     }
-  };
-
-  const openPlugin = async (plugin: PluginDef) => {
-    if (settings.panelVisibility[plugin.id] !== true) {
-      await updateSettings({
-        panelVisibility: { ...settings.panelVisibility, [plugin.id]: true },
-      });
-    }
-    await createPluginWindow(
-      plugin.id, plugin.title,
-      plugin.defaultWidth ?? 360, plugin.defaultHeight ?? 600,
-      plugin.defaultAttachEnabled !== false,
-      plugin.defaultAttachRemember === true,
-      plugin.defaultWhitelist ?? [],
-    );
   };
 
   const getWhitelist = (id: string): string[] =>
@@ -288,6 +347,8 @@ export default function ManagePage() {
       <div className="manage-page">
         <header className="manage-header">
           <div className="manage-header-actions">
+            <button className="btn" onClick={() => { openRuntimeAddonsDir(); refreshRuntimeAddons(); }} title="Open addons folder">Addons</button>
+            <button className="btn" onClick={() => refreshRuntimeAddons()} title="Refresh addons">Refresh</button>
             <button className="btn" onClick={() => { setActivePlugin(null); setRecordingHotkey(false); }} title="返回">
               &#8592;
             </button>
@@ -400,7 +461,7 @@ export default function ManagePage() {
                 <div className="manage-item-info">
                   <span className="manage-item-icon">{p.icon || "📦"}</span>
                   <div className="manage-item-text">
-                    <span className="manage-item-title">{p.title}</span>
+                    <span className="manage-item-title">{p.title}{p.runtime ? " ? addon" : ""}</span>
                     {p.description && <span className="manage-item-desc">{p.description}</span>}
                   </div>
                 </div>
@@ -499,6 +560,7 @@ export default function ManagePage() {
 }
 
 // Helper: find plugin by id
-function getPluginById(id: string): PluginDef | undefined {
-  return getAllPlugins().find((p) => p.id === id);
+function getPluginById(id: string): ManagePlugin | undefined {
+  const builtin = getAllPlugins().map(({ component: _component, ...plugin }) => plugin).find((p) => p.id === id);
+  return builtin;
 }

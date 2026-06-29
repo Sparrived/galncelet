@@ -45,6 +45,56 @@ export async function createPluginWindow(
   return invoke<void>("create_plugin_window", { pluginId, title, width, height, defaultAttachEnabled, defaultAttachRemember, defaultWhitelist });
 }
 
+export interface RuntimeAddonInfo {
+  id: string;
+  title: string;
+  description?: string | null;
+  icon?: string | null;
+  entry: string;
+  defaultWidth?: number | null;
+  defaultHeight?: number | null;
+  showCloseButton?: boolean | null;
+  showCollapseButton?: boolean | null;
+  showAttachButton?: boolean | null;
+  defaultAttachEnabled?: boolean | null;
+  defaultAttachRemember?: boolean | null;
+  defaultWhitelist: string[];
+  permissions: string[];
+  hasBackend: boolean;
+}
+
+export async function listRuntimeAddons(): Promise<RuntimeAddonInfo[]> {
+  return invoke<RuntimeAddonInfo[]>("list_runtime_addons");
+}
+
+export async function getRuntimeAddonsDir(): Promise<string> {
+  return invoke<string>("get_runtime_addons_dir");
+}
+
+export async function openRuntimeAddonsDir(): Promise<string> {
+  return invoke<string>("open_runtime_addons_dir");
+}
+
+export async function createRuntimeAddonWindow(addonId: string): Promise<void> {
+  return invoke<void>("create_runtime_addon_window", { addonId });
+}
+
+export async function invokeRuntimeAddon<T = unknown>(addonId: string, method: string, params: unknown = null): Promise<T> {
+  return invoke<T>("invoke_runtime_addon", { addonId, method, params });
+}
+
+export async function runtimeAddonStorageGet<T = unknown>(addonId: string, key: string): Promise<T | null> {
+  return invoke<T | null>("runtime_addon_storage_get", { addonId, key });
+}
+
+export async function runtimeAddonStorageSet(addonId: string, key: string, value: unknown): Promise<void> {
+  return invoke<void>("runtime_addon_storage_set", { addonId, key, value });
+}
+
+export async function runtimeAddonStorageDelete(addonId: string, key: string): Promise<void> {
+  return invoke<void>("runtime_addon_storage_delete", { addonId, key });
+}
+
 export async function openManageWindow(): Promise<void> {
   return invoke<void>("open_manage_window");
 }

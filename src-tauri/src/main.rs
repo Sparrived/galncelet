@@ -4,6 +4,7 @@
 // Non-plugin framework modules
 mod acrylic;
 mod plugins;
+mod runtime_addons;
 mod settings;
 mod tray;
 mod updater;
@@ -177,6 +178,74 @@ fn create_plugin_window(
         return;
     }
     create_widget_window(&app, &label, &title, &plugin_id, width, height, state.inner(), default_attach_enabled, default_attach_remember, &default_whitelist, None);
+}
+
+#[tauri::command]
+fn create_runtime_addon_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AttachState>>,
+    addon_id: String,
+) -> Result<(), String> {
+    let addon = runtime_addons::load_runtime_addon(&app, &addon_id)?;
+    let label = format!("runtime-addon-{}", addon.id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    let entry = runtime_addons::addon_entry_path(&app, &addon.id)?;
+    let entry_url = tauri::Url::from_file_path(&entry)
+        .map_err(|_| format!("Failed to convert addon entry to file URL: {}", entry.display()))?;
+    let saved = settings::load_settings(app.clone())
+        .ok()
+        .and_then(|s| s.window_states.get(&addon.id).cloned());
+    let width = addon.default_width.unwrap_or(360.0);
+    let height = saved.as_ref().and_then(|s| s.height).unwrap_or(addon.default_height.unwrap_or(600.0));
+    let attach = saved.as_ref().and_then(|s| s.attach_enabled).unwrap_or(addon.default_attach_enabled.unwrap_or(false));
+    let remember = saved.as_ref().and_then(|s| s.attach_remember).unwrap_or(addon.default_attach_remember.unwrap_or(false));
+    let whitelist = saved
+        .as_ref()
+        .and_then(|s| s.whitelist.clone())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| addon.default_whitelist.clone());
+
+    {
+        state.attach_enabled.lock().unwrap().insert(label.clone(), attach);
+        state.attach_remember.lock().unwrap().insert(label.clone(), remember);
+        state.attach_whitelist.lock().unwrap().insert(label.clone(), whitelist);
+    }
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::External(entry_url),
+    )
+    .title(&addon.title)
+    .inner_size(width, height)
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .maximizable(false)
+    .skip_taskbar(true)
+    .visible(!attach);
+
+    if let Some(ref s) = saved {
+        if let (Some(x), Some(y)) = (s.x, s.y) {
+            builder = builder.position(x, y);
+        }
+    }
+
+    let win = builder.build().map_err(|e| format!("failed to create runtime addon window: {e}"))?;
+    let win_handle = win.clone();
+    win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = win_handle.hide();
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -422,6 +491,28 @@ fn main() {
                 create_widget_window(&handle, &label, &manifest.title, &manifest.id, w, h, &attach_state, attach, remember, &wl, initial_visible);
             }
 
+            // Create runtime addon windows from user-provided manifests.
+            match runtime_addons::load_runtime_addons(&handle) {
+                Ok(runtime_manifests) => {
+                    for manifest in &runtime_manifests {
+                        app_settings.panel_visibility.entry(manifest.id.clone()).or_insert(false);
+                    }
+                    let _ = settings::save_settings(handle.clone(), app_settings.clone());
+                    for manifest in runtime_manifests {
+                        let visible = app_settings.panel_visibility.get(&manifest.id).copied().unwrap_or(false);
+                        if !visible {
+                            continue;
+                        }
+                        let _ = create_runtime_addon_window(
+                            handle.clone(),
+                            app.state::<Arc<AttachState>>(),
+                            manifest.id.clone(),
+                        );
+                    }
+                }
+                Err(e) => eprintln!("[runtime-addons] failed to load: {e}"),
+            }
+
             // List all created windows
             for (label, _win) in handle.webview_windows() {
                 println!("[setup] window created: {}", label);
@@ -457,6 +548,9 @@ fn main() {
 
             // System tray (dynamically built from plugin manifests)
             tray::setup(app, &manifests).expect("failed to setup system tray");
+
+            // Runtime addon folder watcher
+            runtime_addons::start_runtime_addon_watcher(handle.clone());
 
             // Window attachment loop
             let app_handle = app.handle().clone();
@@ -494,6 +588,14 @@ fn main() {
             set_attach_remember,
             get_browser_url,
             create_plugin_window,
+            create_runtime_addon_window,
+            runtime_addons::list_runtime_addons,
+            runtime_addons::get_runtime_addons_dir,
+            runtime_addons::open_runtime_addons_dir,
+            runtime_addons::invoke_runtime_addon,
+            runtime_addons::runtime_addon_storage_get,
+            runtime_addons::runtime_addon_storage_set,
+            runtime_addons::runtime_addon_storage_delete,
             open_manage_window,
             open_settings_window,
             open_plugin_settings,

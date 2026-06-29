@@ -117,3 +117,9 @@ Rust 侧的 `mod` 声明和 `setup()` 调用由 `build.rs` 自动生成。
 | amkr | LLM API 路由器实时仪表盘 | ⭐⭐ |
 | git | 完整 Git 仓库管理 | ⭐⭐⭐ |
 | music-player | SMTC 媒体播放器 + 歌词 | ⭐⭐ |
+
+## Runtime addons
+
+Galncelet supports hot-pluggable runtime addons from `%APPDATA%\Galncelet\addons`. Users can copy or delete addon folders without rebuilding the main app; Galncelet watches the folder and refreshes the management page automatically. Runtime addons can be frontend-only or can ship their own sidecar backend that communicates with Galncelet through JSON-RPC.
+
+See `docs/runtime-addons.md` for the package layout, manifest schema, frontend API, and sidecar protocol.
