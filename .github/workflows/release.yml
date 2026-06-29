@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.1.0"
+        description: "Release tag, for example v1.1.0"
         required: true
         type: string
       draft:
@@ -30,6 +30,7 @@ jobs:
     runs-on: windows-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
       should_publish: ${{ steps.release.outputs.should_publish }}
     steps:
       - name: Resolve release tag
@@ -37,15 +38,19 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $shouldPublish = "false"
+          $shouldPublish = "true"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $tag = "${{ inputs.tag }}"
-            $shouldPublish = "true"
           }
           if (-not $tag.StartsWith("v")) {
             throw "Release tag must start with 'v'. Received '$tag'."
           }
+          $version = $tag.Substring(1)
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Release tag must look like v1.2.3. Received '$tag'."
+          }
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "should_publish=$shouldPublish" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
   build-release:
@@ -76,10 +81,20 @@ jobs:
         run: |
           Remove-Item -LiteralPath "src-tauri/.cargo/config.toml" -Force -ErrorAction SilentlyContinue
 
-      - name: Build release package
+      - name: Build normal installer package
         shell: pwsh
         run: |
-          .\scripts\release.ps1 -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease
+          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease
+
+      - name: Build offline installer package
+        shell: pwsh
+        run: |
+          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease -Offline
+
+      - name: Recompute normal checksums after offline build
+        shell: pwsh
+        run: |
+          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease -SkipBuild
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -87,7 +102,12 @@ jobs:
           name: galncelet-${{ needs.resolve.outputs.tag }}
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Galncelet_${{ needs.resolve.outputs.version }}_x64_en-US.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Galncelet_${{ needs.resolve.outputs.version }}_x64-setup.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Galncelet_${{ needs.resolve.outputs.version }}_x64_en-US-offline.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Galncelet_${{ needs.resolve.outputs.version }}_x64-setup-offline.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS.txt
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS-offline.txt
           if-no-files-found: error
 
   verify-release:
@@ -108,16 +128,55 @@ jobs:
           name: galncelet-${{ needs.resolve.outputs.tag }}
           path: release-artifacts
 
-      - name: Verify checksum file exists
+      - name: Verify expected files exist
         shell: pwsh
         run: |
-          $checksum = Get-ChildItem -Path release-artifacts -Recurse -Filter SHA256SUMS.txt | Select-Object -First 1
-          if (-not $checksum) {
-            throw "SHA256SUMS.txt was not found in the downloaded release artifacts."
+          $version = "${{ needs.resolve.outputs.version }}"
+          $expected = @(
+            "galncelet.exe",
+            "Galncelet_${version}_x64_en-US.msi",
+            "Galncelet_${version}_x64-setup.exe",
+            "Galncelet_${version}_x64_en-US-offline.msi",
+            "Galncelet_${version}_x64-setup-offline.exe",
+            "SHA256SUMS.txt",
+            "SHA256SUMS-offline.txt"
+          )
+          $files = Get-ChildItem -Path release-artifacts -Recurse -File
+          foreach ($name in $expected) {
+            if (-not ($files | Where-Object { $_.Name -eq $name })) {
+              throw "Expected release artifact was not found: $name"
+            }
           }
-          Write-Host "Found checksum file: $($checksum.FullName)"
+          $files | Sort-Object Name | ForEach-Object { Write-Host "$($_.Name) $($_.Length)" }
 
-      - name: Verify GUI subsystem script still parses
+      - name: Verify checksum files
+        shell: pwsh
+        run: |
+          Push-Location release-artifacts
+          try {
+            foreach ($checksum in @("SHA256SUMS.txt", "SHA256SUMS-offline.txt")) {
+              $checksumFile = Get-ChildItem -Recurse -File -Filter $checksum | Select-Object -First 1
+              if (-not $checksumFile) { throw "$checksum was not found." }
+              foreach ($line in Get-Content $checksumFile.FullName) {
+                if (-not $line.Trim()) { continue }
+                $parts = $line -split '\s+', 2
+                if ($parts.Count -ne 2) { throw "Invalid checksum line in $checksum: $line" }
+                $relative = $parts[1] -replace '/', [System.IO.Path]::DirectorySeparatorChar
+                $candidate = Join-Path $PWD $relative
+                if (-not (Test-Path $candidate)) {
+                  $candidate = Join-Path $PWD ([System.IO.Path]::GetFileName($relative))
+                }
+                if (-not (Test-Path $candidate)) { throw "Checksum target not found: $relative" }
+                $actual = (Get-FileHash -Algorithm SHA256 -Path $candidate).Hash.ToLowerInvariant()
+                if ($actual -ne $parts[0]) { throw "Checksum mismatch for $relative" }
+              }
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Verify release script parses
         shell: pwsh
         run: |
           [scriptblock]::Create((Get-Content scripts/release.ps1 -Raw)) | Out-Null

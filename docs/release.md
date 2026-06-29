@@ -1,60 +1,69 @@
 # Release
 
-This project now uses one reusable flow for local builds and GitHub Actions releases.
+This project uses one release script plus one GitHub Actions workflow for repeatable local and CI releases.
 
 ## Before you release
 
 - make sure `master` is clean and up to date
-- bump the version in `package.json` if you want a new semantic version
-- ensure the submodule `src/addons` is pushed first when it has changes
-- confirm the release tag will be `v<version>`
-- verify GitHub Actions can use the `GITHUB_TOKEN` with `contents: write`
-
-## Local release build
-
-```powershell
-npm run release
-```
-
-This performs the full build-and-verify flow:
-
-- checks prerequisites
-- validates the working tree unless `-AllowDirty` is passed
-- optionally syncs the version into `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`
-- installs locked dependencies with `npm ci`
-- builds the Windows Tauri release bundle
-- verifies the release binary is linked as a Windows GUI app
-- writes `SHA256SUMS.txt` next to the bundle artifacts
-
-To build with a specific version without publishing:
-
-```powershell
-npm run release -- -Version 1.0.0 -Tag v1.0.0
-```
-
-To publish an existing build from a machine with `gh` configured:
-
-```powershell
-npm run release:publish -- -Tag v1.0.0
-```
+- update versions in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock` when cutting a new semantic version
+- confirm the release tag is `v<version>`
+- verify GitHub Actions can use `GITHUB_TOKEN` with `contents: write`
 
 ## GitHub Actions release
 
-The workflow at `.github/workflows/release.yml` now supports both tag pushes and manual dispatch:
+The workflow at `.github/workflows/release.yml` is the canonical release path.
 
-- pushing a tag like `v1.0.0` builds the artifacts and publishes the release
-- running the workflow manually can reuse an existing tag and optionally publish, draft, or mark the release as prerelease
+It runs on:
+
+- pushing a tag like `v1.2.3`
+- manual `workflow_dispatch` with a tag, draft flag, and prerelease flag
+
+For each release, the workflow:
+
+1. resolves `tag` and `version` from the event
+2. installs Node and Rust on `windows-latest`
+3. runs `scripts/release.ps1` for the normal installer build
+4. runs `scripts/release.ps1 -Offline` for the offline WebView2 installer build
+5. recomputes normal checksums after the offline build
+6. verifies expected artifacts and checksum files
+7. creates or updates the GitHub Release with generated notes
+
+## Local release build
+
+Normal installer:
+
+```powershell
+npm run release -- -Version 1.2.3 -Tag v1.2.3
+```
+
+Offline installer with embedded WebView2 runtime installer:
+
+```powershell
+npm run release:offline -- -Version 1.2.3 -Tag v1.2.3
+```
+
+Refresh normal checksums after building offline artifacts:
+
+```powershell
+npm run release -- -Version 1.2.3 -Tag v1.2.3 -SkipBuild
+```
+
+Publish from a local machine with `gh` configured:
+
+```powershell
+npm run release:publish -- -Version 1.2.3 -Tag v1.2.3
+```
 
 ## Artifact layout
 
-The release build always produces:
+The release produces:
 
 - `src-tauri/target/x86_64-pc-windows-msvc/release/galncelet.exe`
-- the Tauri bundle directory under `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/`
-- `SHA256SUMS.txt` for checksum verification
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Galncelet_<version>_x64_en-US.msi`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Galncelet_<version>_x64-setup.exe`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Galncelet_<version>_x64_en-US-offline.msi`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Galncelet_<version>_x64-setup-offline.exe`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS.txt`
+- `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/SHA256SUMS-offline.txt`
 
-The release script is the single entry point for local verification and for the GitHub Actions build step, so future releases can reuse the same logic without duplicating steps.
-
-## Release Playbook
-
-- See docs/release-playbook.md for the shortest day-to-day release checklist.
+`SHA256SUMS.txt` covers the normal installers and standalone exe. `SHA256SUMS-offline.txt` covers the offline installers.
