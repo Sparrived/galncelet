@@ -1,6 +1,6 @@
 [package]
 name = "galncelet"
-version = "1.1.0"
+version = "1.1.1"
 description = "Frosted-glass git status side panel"
 edition = "2021"
 
