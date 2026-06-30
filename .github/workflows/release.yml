@@ -155,7 +155,7 @@ jobs:
               foreach ($line in Get-Content $checksumFile.FullName) {
                 if (-not $line.Trim()) { continue }
                 $parts = $line -split '\s+', 2
-                if ($parts.Count -ne 2) { throw "Invalid checksum line in $checksum: $line" }
+                if ($parts.Count -ne 2) { throw "Invalid checksum line in ${checksum}: $line" }
                 $relative = $parts[1] -replace '/', [System.IO.Path]::DirectorySeparatorChar
                 $candidate = Join-Path $PWD $relative
                 if (-not (Test-Path $candidate)) {
