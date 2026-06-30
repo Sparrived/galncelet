@@ -81,20 +81,15 @@ jobs:
         run: |
           Remove-Item -LiteralPath "src-tauri/.cargo/config.toml" -Force -ErrorAction SilentlyContinue
 
-      - name: Build normal installer package
-        shell: pwsh
-        run: |
-          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease
-
       - name: Build offline installer package
         shell: pwsh
         run: |
           .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease -Offline
 
-      - name: Recompute normal checksums after offline build
+      - name: Build normal installer package
         shell: pwsh
         run: |
-          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease -SkipBuild
+          .\scripts\release.ps1 -Version "${{ needs.resolve.outputs.version }}" -Tag "${{ needs.resolve.outputs.tag }}" -AllowDirty -SkipRelease
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
