@@ -161,6 +161,9 @@ jobs:
                 if (-not (Test-Path $candidate)) {
                   $candidate = Join-Path $PWD ([System.IO.Path]::GetFileName($relative))
                 }
+                if (-not (Test-Path $candidate)) {
+                  $candidate = Get-ChildItem -Recurse -File -Filter ([System.IO.Path]::GetFileName($relative)) | Select-Object -First 1 -ExpandProperty FullName
+                }
                 if (-not (Test-Path $candidate)) { throw "Checksum target not found: $relative" }
                 $actual = (Get-FileHash -Algorithm SHA256 -Path $candidate).Hash.ToLowerInvariant()
                 if ($actual -ne $parts[0]) { throw "Checksum mismatch for $relative" }
